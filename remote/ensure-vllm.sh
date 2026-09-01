@@ -43,6 +43,7 @@ signature="$(printf '%s\n' \
     "${CONTEXT_SIZE}" \
     "${GPU_MEMORY_UTILIZATION}" \
     "${TOOL_CALL_PARSER}" \
+    "log-requests" \
     | sha256sum | awk '{print $1}')"
 
 is_healthy() {
@@ -172,6 +173,7 @@ nohup "${VLLM_VENV}/bin/vllm" serve "${MODEL_ID}" \
     --max-model-len "${CONTEXT_SIZE}" \
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
     --enable-prefix-caching \
+    --enable-log-requests \
     --enable-auto-tool-choice \
     --tool-call-parser "${TOOL_CALL_PARSER}" \
     >"${LOG_FILE}" 2>&1 < /dev/null &

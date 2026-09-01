@@ -8,6 +8,13 @@ while IFS= read -r script; do
 done < <(find "${ROOT}" -type f \( -name '*.sh' -o -name 'llm-up' -o -name 'llm-down' -o -name 'llm-status' -o -name 'llm-doctor' -o -name 'opencode-runpod' \) | sort)
 
 jq empty "${ROOT}/config/opencode.base.json"
+jq -e '
+  .enabled_providers == ["runpod"]
+  and .model == "runpod/PLACEHOLDER"
+  and (.provider | keys == ["runpod"])
+' "${ROOT}/config/opencode.base.json" >/dev/null
+
+rg -F -- '--enable-log-requests' "${ROOT}/remote/ensure-vllm.sh" >/dev/null
 
 if command -v shellcheck >/dev/null 2>&1; then
     mapfile -t scripts < <(find "${ROOT}" -type f \( -name '*.sh' -o -name 'llm-up' -o -name 'llm-down' -o -name 'llm-status' -o -name 'llm-doctor' -o -name 'opencode-runpod' \) | sort)

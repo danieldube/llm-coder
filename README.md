@@ -214,6 +214,62 @@ OpenCode version:
 ~/.opencode/bin/opencode --version
 ```
 
+## Verify that CLion uses RunPod
+
+The generated OpenCode configuration has `enabled_providers: ["runpod"]`.
+This prevents automatically discovered providers, including providers with
+locally stored credentials, from being selected by this ACP agent. Its only
+configured model is `runpod/${SERVED_MODEL_NAME}`.
+
+Use three terminals while submitting a distinctive, reasonably long request
+from CLion (for example: "Calculate 739391 * 17 and explain the calculation."):
+
+```bash
+# Host: direct SSH-tunnel traffic. OpenCode itself uses port 18000.
+sudo tcpdump -i lo -nn 'tcp port 18001'
+
+# RunPod: vLLM request records. Keep the normal INFO log level.
+tail -f /workspace/llm-coding/vllm.log
+
+# RunPod: optional corroborating GPU activity.
+nvidia-smi dmon -s pucm
+```
+
+`remote/ensure-vllm.sh` starts vLLM with `--enable-log-requests`, so its log
+should record the request when the local traffic is observed. GPU utilization
+is corroborating evidence only: brief requests and mixture-of-experts models
+may not produce a conspicuous utilization spike.
+
+For a definitive fallback test, stop both the tunnel and its activation path
+after OpenCode has started:
+
+```bash
+systemctl --user stop \
+  llm-coding.socket \
+  llm-coding-proxy.service \
+  llm-coding-tunnel.service
+curl --fail http://127.0.0.1:18001/v1/models  # must fail
+```
+
+A new model request through CLion must now fail. Start the tunnel again, then
+confirm the direct endpoint and retry:
+
+```bash
+systemctl --user start llm-coding.socket
+llm-up
+curl --fail http://127.0.0.1:18001/v1/models | jq .
+```
+
+Stopping only `llm-coding-tunnel.service` is insufficient: a request through
+port `18000` can socket-activate the proxy and recreate the tunnel.
+
+The provider/model resolved by the ACP process can also be checked without
+reading credentials:
+
+```bash
+opencode-runpod models runpod
+```
+
 ## Configuration notes
 
 ### Pod persistence
