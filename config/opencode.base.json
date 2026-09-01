@@ -1,0 +1,44 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "runpod/PLACEHOLDER",
+  "provider": {
+    "runpod": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Self-hosted RunPod",
+      "options": {
+        "baseURL": "http://127.0.0.1:18000/v1"
+      },
+      "models": {}
+    }
+  },
+  "permission": {
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    },
+    "edit": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "external_directory": "deny",
+    "webfetch": "ask",
+    "websearch": "ask",
+    "task": "ask",
+    "skill": "ask",
+    "bash": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git grep*": "allow",
+      "rg *": "allow",
+      "grep *": "allow",
+      "git commit*": "ask",
+      "git push*": "deny",
+      "sudo *": "deny",
+      "ssh *": "deny"
+    }
+  }
+}

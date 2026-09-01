@@ -1,0 +1,9 @@
+[Unit]
+Description=RunPod vLLM SSH tunnel
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/llm-coding/bin/tunnel.sh
+Restart=on-failure
+RestartSec=5

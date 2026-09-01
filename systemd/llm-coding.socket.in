@@ -1,0 +1,10 @@
+[Unit]
+Description=On-demand self-hosted LLM endpoint
+
+[Socket]
+ListenStream=127.0.0.1:@LOCAL_PROXY_PORT@
+NoDelay=true
+Service=llm-coding-proxy.service
+
+[Install]
+WantedBy=sockets.target

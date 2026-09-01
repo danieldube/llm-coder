@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=common.sh
+source "${SCRIPT_DIR}/common.sh"
+
+"${SCRIPT_DIR}/render-opencode-config.sh"
+export OPENCODE_CONFIG="${STATE_DIR}/opencode.json"
+
+OPENCODE_BIN="${HOME}/.opencode/bin/opencode"
+[[ -x "${OPENCODE_BIN}" ]] || fatal "OpenCode is not installed at ${OPENCODE_BIN}. Run install.sh."
+
+# Warm the model asynchronously. All output is suppressed because ACP owns
+# stdout/stderr semantics and startup messages must never corrupt stdio JSON.
+(
+    curl \
+        --fail \
+        --silent \
+        --max-time "$((RUNPOD_START_TIMEOUT_SECONDS + VLLM_START_TIMEOUT_SECONDS + 120))" \
+        "http://127.0.0.1:${LOCAL_PROXY_PORT}/v1/models" \
+        >/dev/null 2>&1 || true
+) &
+
+exec "${OPENCODE_BIN}" "$@"

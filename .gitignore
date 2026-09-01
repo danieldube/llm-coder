@@ -1,0 +1,5 @@
+*.zip
+*.tmp
+.env
+secrets.env
+.idea/*

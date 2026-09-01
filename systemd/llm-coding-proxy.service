@@ -1,0 +1,12 @@
+[Unit]
+Description=On-demand RunPod LLM proxy
+Requires=llm-coding.socket
+After=network-online.target llm-coding.socket
+
+[Service]
+Type=notify
+ExecStartPre=%h/.local/share/llm-coding/bin/runtime-up.sh
+ExecStart=%h/.local/share/llm-coding/bin/socket-proxy.sh
+ExecStopPost=%h/.local/share/llm-coding/bin/runtime-down.sh
+TimeoutStartSec=35min
+TimeoutStopSec=3min

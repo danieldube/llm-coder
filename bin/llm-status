@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=common.sh
+source "${SCRIPT_DIR}/common.sh"
+
+require_command jq
+
+printf '%-12s %s\n' "Socket:" "$(systemctl --user is-active llm-coding.socket 2>/dev/null || true)"
+printf '%-12s %s\n' "Proxy:" "$(systemctl --user is-active llm-coding-proxy.service 2>/dev/null || true)"
+printf '%-12s %s\n' "Tunnel:" "$(systemctl --user is-active llm-coding-tunnel.service 2>/dev/null || true)"
+
+pod="$(find_pod_by_name)"
+if [[ -z "${pod}" ]]; then
+    printf '%-12s %s\n' "RunPod:" "not created"
+else
+    printf '%-12s %s\n' "RunPod:" "$(jq -r '.desiredStatus' <<<"${pod}")"
+    printf '%-12s %s\n' "Pod ID:" "$(jq -r '.id' <<<"${pod}")"
+    printf '%-12s %s\n' "GPU:" "$(jq -r '.gpu.displayName // .gpu.id // "unknown"' <<<"${pod}")"
+fi
+
+# Probe the direct tunnel port only. Probing LOCAL_PROXY_PORT would activate
+# the socket and unintentionally start a stopped GPU.
+if curl --fail --silent --max-time 2 \
+    "http://127.0.0.1:${LOCAL_TUNNEL_PORT}/v1/models" >/dev/null 2>&1; then
+    printf '%-12s %s\n' "vLLM:" "reachable"
+else
+    printf '%-12s %s\n' "vLLM:" "not reachable"
+fi
