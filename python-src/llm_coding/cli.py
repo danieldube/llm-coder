@@ -11,7 +11,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import click
 import requests
@@ -30,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_command(
-    cmd: List[str], capture_output: bool = True, check: bool = True
+    cmd: list[str], capture_output: bool = True, check: bool = True
 ) -> subprocess.CompletedProcess:
     """Run a command and handle errors"""
     try:
@@ -75,7 +74,7 @@ def release_lock() -> None:
         pass
 
 
-def create_pod_config(config: Dict[str, str]) -> Dict:
+def create_pod_config(config: dict[str, str]) -> dict:
     """Create pod configuration for RunPod"""
     # This mirrors the logic from runtime-up.sh
     pod_config = {
@@ -146,7 +145,7 @@ def wait_for_ssh_connection(host: str, port: int, timeout: int = 120) -> bool:
 
 
 def ensure_vllm_on_remote(
-    host: str, port: int, ssh_key: str, config: Dict[str, str]
+    host: str, port: int, ssh_key: str, config: dict[str, str]
 ) -> bool:
     """Ensure vLLM is running on remote host"""
     # This replicates the logic from runtime-up.sh that runs ensure-vllm.sh remotely
@@ -263,7 +262,7 @@ def read_activation_status(state_dir: Path) -> str:
 
 def find_pod_by_name(
     runpod_client: RunPodClient, pod_name: str
-) -> Optional[Dict]:
+) -> dict | None:
     """Find a pod by name"""
     try:
         pods = runpod_client.get_pods()
@@ -280,14 +279,14 @@ def runpod_api(
     runpod_client: RunPodClient,
     method: str,
     path: str,
-    body: Optional[str] = None,
+    body: str | None = None,
 ) -> str:
     """Make a RunPod API call"""
     return runpod_client.api_call(method, path, body)
 
 
 def print_runtime_ready_summary(
-    config: Dict[str, str], state_dir: Path, proxy_models: Dict
+    config: dict[str, str], state_dir: Path, proxy_models: dict
 ) -> None:
     """Print a concise, evidence-based summary after successful activation."""
     model = config.get('SERVED_MODEL_NAME', 'unknown')

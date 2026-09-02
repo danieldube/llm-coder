@@ -9,7 +9,6 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import requests
 
@@ -47,7 +46,7 @@ class ConfigManager:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.install_dir.mkdir(parents=True, exist_ok=True)
 
-    def load_config(self) -> Dict[str, str]:
+    def load_config(self) -> dict[str, str]:
         """Load configuration from env files"""
         config = {}
 
@@ -73,7 +72,7 @@ class ConfigManager:
 
         return config
 
-    def validate_config(self, config: Dict[str, str]) -> bool:
+    def validate_config(self, config: dict[str, str]) -> bool:
         """Validate configuration"""
         required_keys = ['RUNPOD_API_KEY', 'RUNPOD_SSH_KEY', 'RUNPOD_POD_NAME']
         for key in required_keys:
@@ -91,8 +90,8 @@ class RunPodClient:
         self.base_url = 'https://rest.runpod.io/v1'
 
     def _make_request(
-        self, method: str, path: str, data: Optional[Dict] = None
-    ) -> Dict:
+        self, method: str, path: str, data: dict | None = None
+    ) -> dict:
         """Make API request to RunPod"""
         headers = {
             'Authorization': f'Bearer {self.api_key}',
@@ -122,14 +121,14 @@ class RunPodClient:
             ) from exc
         return response.json()
 
-    def get_pods(self) -> List[Dict]:
+    def get_pods(self) -> list[dict]:
         """Get list of pods"""
         payload = self._make_request('GET', '/pods')
         return (
             payload.get('data', []) if isinstance(payload, dict) else payload
         )
 
-    def find_pod_by_name(self, name: str) -> Optional[Dict]:
+    def find_pod_by_name(self, name: str) -> dict | None:
         """Find pod by name"""
         pods = self.get_pods()
         matching_pods = [pod for pod in pods if pod.get('name') == name]
@@ -137,7 +136,7 @@ class RunPodClient:
             raise ValueError(f"More than one RunPod named '{name}' exists.")
         return matching_pods[0] if matching_pods else None
 
-    def create_pod(self, pod_config: Dict) -> str:
+    def create_pod(self, pod_config: dict) -> str:
         """Create a new pod"""
         response = self._make_request('POST', '/pods', pod_config)
         return response['id']
@@ -146,7 +145,7 @@ class RunPodClient:
         """Start an existing pod"""
         self._make_request('POST', f'/pods/{pod_id}/start')
 
-    def get_pod(self, pod_id: str) -> Dict:
+    def get_pod(self, pod_id: str) -> dict:
         """Get pod details"""
         return self._make_request('GET', f'/pods/{pod_id}')
 
@@ -170,7 +169,7 @@ def write_shell_assignment(key: str, value: str) -> str:
     return f'{key}="{value}"\n'
 
 
-def create_opencode_config(config: Dict[str, str], state_dir: Path) -> Path:
+def create_opencode_config(config: dict[str, str], state_dir: Path) -> Path:
     """Render OpenCode configuration"""
     # Read base config
     base_config_path = Path(__file__).parent / 'config' / 'opencode.base.json'

@@ -6,7 +6,6 @@ Python implementation of llm-coding functionality
 import logging
 import os
 from pathlib import Path
-from typing import Dict
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +41,7 @@ class ConfigManager:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.install_dir.mkdir(parents=True, exist_ok=True)
 
-    def load_config(self) -> Dict[str, str]:
+    def load_config(self) -> dict[str, str]:
         """Load configuration from env files"""
         config = {}
 

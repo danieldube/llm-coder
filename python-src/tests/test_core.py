@@ -71,8 +71,9 @@ SECRET_KEY=secret123
         self.assertEqual(config['SECRET_KEY'], 'secret123')
 
     def test_default_paths_expand_home_directory(self):
-        with patch.dict(os.environ, {}, clear=True), patch.object(
-            Path, 'mkdir'
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(Path, 'mkdir'),
         ):
             config_manager = ConfigManager()
 
@@ -183,11 +184,11 @@ class TestSystemdInstall(unittest.TestCase):
             systemctl = MagicMock()
             systemctl.return_value.returncode = 0
 
-            with patch.dict(
-                os.environ, {'XDG_CONFIG_HOME': str(config_home)}
-            ), patch.object(
-                sys, 'argv', [str(bin_dir / 'llm-up')]
-            ), patch.object(runtime_module, '_systemctl', systemctl):
+            with (
+                patch.dict(os.environ, {'XDG_CONFIG_HOME': str(config_home)}),
+                patch.object(sys, 'argv', [str(bin_dir / 'llm-up')]),
+                patch.object(runtime_module, '_systemctl', systemctl),
+            ):
                 runtime_module.install_systemd(config)
 
             unit = (
@@ -220,11 +221,11 @@ class TestSystemdInstall(unittest.TestCase):
             systemctl = MagicMock()
             systemctl.return_value.returncode = 0
 
-            with patch.dict(
-                os.environ, {'XDG_CONFIG_HOME': str(config_home)}
-            ), patch.object(
-                sys, 'argv', [str(bin_dir / 'llm-up')]
-            ), patch.object(runtime_module, '_systemctl', systemctl):
+            with (
+                patch.dict(os.environ, {'XDG_CONFIG_HOME': str(config_home)}),
+                patch.object(sys, 'argv', [str(bin_dir / 'llm-up')]),
+                patch.object(runtime_module, '_systemctl', systemctl),
+            ):
                 runtime_module.ensure_socket(config)
 
             self.assertIn(
@@ -245,19 +246,24 @@ class TestRuntimeReadySummary(unittest.TestCase):
             'RUNPOD_API_KEY': 'test-key',
             'RUNPOD_POD_NAME': 'test-pod',
         }
-        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
-            cli_module.requests, 'get', return_value=response
-        ), patch.object(
-            cli_module,
-            'get_systemd_service_info',
-            return_value=('active', 'id'),
-        ), patch.object(
-            cli_module.RunPodClient, 'find_pod_by_name', return_value=pod
-        ), patch.object(
-            cli_module,
-            'create_opencode_config',
-            return_value=Path(temp_dir) / 'opencode.json',
-        ), patch('builtins.print') as print_mock:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.object(cli_module.requests, 'get', return_value=response),
+            patch.object(
+                cli_module,
+                'get_systemd_service_info',
+                return_value=('active', 'id'),
+            ),
+            patch.object(
+                cli_module.RunPodClient, 'find_pod_by_name', return_value=pod
+            ),
+            patch.object(
+                cli_module,
+                'create_opencode_config',
+                return_value=Path(temp_dir) / 'opencode.json',
+            ),
+            patch('builtins.print') as print_mock,
+        ):
             cli_module.print_runtime_ready_summary(
                 config, Path(temp_dir), {'data': [{'id': 'test-model'}]}
             )
@@ -272,9 +278,10 @@ class TestRuntimeReadySummary(unittest.TestCase):
 
 class TestActivationFailureDisplay(unittest.TestCase):
     def test_prints_recorded_actionable_error_without_journal(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
-            sys, 'stderr', new_callable=io.StringIO
-        ) as stderr:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.object(sys, 'stderr', new_callable=io.StringIO) as stderr,
+        ):
             Path(temp_dir, 'runtime.activation-error').write_text(
                 'No GPU capacity. Retry later.'
             )
@@ -297,13 +304,14 @@ class TestActivationFailureDisplay(unittest.TestCase):
 
 class TestLlmUp(unittest.TestCase):
     def test_starts_socket_request_before_waiting_for_activation(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
-            cli_module, 'check_dependencies'
-        ), patch.object(cli_module, 'ensure_socket'), patch.object(
-            cli_module, 'ConfigManager'
-        ) as config_manager_class, patch.object(
-            cli_module, 'print_runtime_ready_summary'
-        ), patch.object(cli_module.subprocess, 'Popen') as popen:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.object(cli_module, 'check_dependencies'),
+            patch.object(cli_module, 'ensure_socket'),
+            patch.object(cli_module, 'ConfigManager') as config_manager_class,
+            patch.object(cli_module, 'print_runtime_ready_summary'),
+            patch.object(cli_module.subprocess, 'Popen') as popen,
+        ):
             config_manager = config_manager_class.return_value
             config_manager.load_config.return_value = {
                 'RUNPOD_API_KEY': 'test-key',
@@ -325,23 +333,25 @@ class TestLlmUp(unittest.TestCase):
         self.assertEqual(command[-1], 'http://127.0.0.1:18000/v1/models')
 
     def test_recovers_active_proxy_when_tunnel_is_unavailable(self):
-        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
-            cli_module, 'check_dependencies'
-        ), patch.object(cli_module, 'ensure_socket'), patch.object(
-            cli_module, 'ConfigManager'
-        ) as config_manager_class, patch.object(
-            cli_module,
-            'get_systemd_service_info',
-            side_effect=[('active', 'old'), ('active', 'old')],
-        ), patch.object(
-            cli_module.requests,
-            'get',
-            side_effect=cli_module.requests.ConnectionError,
-        ), patch.object(
-            cli_module, 'run_command'
-        ) as run_command, patch.object(
-            cli_module, 'print_runtime_ready_summary'
-        ), patch.object(cli_module.subprocess, 'Popen') as popen:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.object(cli_module, 'check_dependencies'),
+            patch.object(cli_module, 'ensure_socket'),
+            patch.object(cli_module, 'ConfigManager') as config_manager_class,
+            patch.object(
+                cli_module,
+                'get_systemd_service_info',
+                side_effect=[('active', 'old'), ('active', 'old')],
+            ),
+            patch.object(
+                cli_module.requests,
+                'get',
+                side_effect=cli_module.requests.ConnectionError,
+            ),
+            patch.object(cli_module, 'run_command') as run_command,
+            patch.object(cli_module, 'print_runtime_ready_summary'),
+            patch.object(cli_module.subprocess, 'Popen') as popen,
+        ):
             config_manager = config_manager_class.return_value
             config_manager.load_config.return_value = {
                 'RUNPOD_API_KEY': 'test-key',
@@ -365,18 +375,19 @@ class TestLlmUp(unittest.TestCase):
         )
 
     def test_llm_down_stops_proxy_before_stopping_runtime(self):
-        with patch.object(
-            cli_module,
-            '_shutdown_summary_items',
-            return_value=(
-                ['socket listener', 'local proxy'],
-                ['runtime.env', 'opencode.json'],
+        with (
+            patch.object(
+                cli_module,
+                '_shutdown_summary_items',
+                return_value=(
+                    ['socket listener', 'local proxy'],
+                    ['runtime.env', 'opencode.json'],
+                ),
             ),
-        ), patch.object(
-            cli_module, 'run_command'
-        ) as run_command, patch.object(
-            cli_module, 'runtime_down'
-        ) as runtime_down, patch('builtins.print') as print_mock:
+            patch.object(cli_module, 'run_command') as run_command,
+            patch.object(cli_module, 'runtime_down') as runtime_down,
+            patch('builtins.print') as print_mock,
+        ):
             run_command.return_value.returncode = 0
             cli_module.llm_down.callback()
 
@@ -426,16 +437,17 @@ class TestRuntimeDown(unittest.TestCase):
             }
             systemctl = MagicMock()
             systemctl.return_value.returncode = 0
-            with patch.object(
-                runtime_module, 'ConfigManager', return_value=manager
-            ), patch.object(
-                runtime_module, '_systemctl', systemctl
-            ), patch.object(
-                runtime_module.Path, 'home', return_value=home
-            ), patch.object(
-                runtime_module.RunPodClient,
-                'find_pod_by_name',
-                return_value=None,
+            with (
+                patch.object(
+                    runtime_module, 'ConfigManager', return_value=manager
+                ),
+                patch.object(runtime_module, '_systemctl', systemctl),
+                patch.object(runtime_module.Path, 'home', return_value=home),
+                patch.object(
+                    runtime_module.RunPodClient,
+                    'find_pod_by_name',
+                    return_value=None,
+                ),
             ):
                 runtime_module.down()
 
@@ -459,16 +471,19 @@ class TestRuntimeDown(unittest.TestCase):
             }
             systemctl = MagicMock()
             systemctl.return_value.returncode = 0
-            with patch.object(
-                runtime_module, 'ConfigManager', return_value=manager
-            ), patch.object(
-                runtime_module, '_systemctl', systemctl
-            ), patch.object(
-                runtime_module.Path, 'home', return_value=root / 'home'
-            ), patch.object(
-                runtime_module.RunPodClient,
-                'find_pod_by_name',
-                side_effect=RuntimeError('API unavailable'),
+            with (
+                patch.object(
+                    runtime_module, 'ConfigManager', return_value=manager
+                ),
+                patch.object(runtime_module, '_systemctl', systemctl),
+                patch.object(
+                    runtime_module.Path, 'home', return_value=root / 'home'
+                ),
+                patch.object(
+                    runtime_module.RunPodClient,
+                    'find_pod_by_name',
+                    side_effect=RuntimeError('API unavailable'),
+                ),
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
