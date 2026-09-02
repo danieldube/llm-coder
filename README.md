@@ -29,7 +29,7 @@ uv pip install -e .
 ```bash
 # Run the commands (same as original bash scripts)
 llm-up
-llm-down  
+llm-down
 llm-status
 llm-doctor
 opencode-runpod
