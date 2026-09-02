@@ -28,18 +28,22 @@ before changing those areas.
 ## Development workflow
 
 Use Python 3.8+ for compatibility; tooling is configured for Python 3.13.
-Install the project and development dependencies in an isolated environment:
+All AI agents must use the repository's `.venv` for Python commands and must
+never install packages into or run checks with the system Python. Activate it
+before working, or invoke its interpreter directly:
 
 ```bash
-python3 -m pip install -e .
-python3 -m pip install -r requirements.txt
+source .venv/bin/activate
+python -m pip install -e .
+python -m pip install -r requirements.txt
+# Alternatively: .venv/bin/python -m unittest discover -s python-src/tests
 ```
 
 Run the relevant tests from the Python source directory:
 
 ```bash
 cd python-src
-python3 -m unittest discover -s tests
+python -m unittest discover -s tests
 ```
 
 Run the full required validation before handing off a change:
