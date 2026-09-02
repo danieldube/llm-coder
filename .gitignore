@@ -11,16 +11,13 @@ __pycache__/
 .venv/
 venv/
 pyvenv.cfg
-__pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
 .pytest_cache/
 .coverage
 .coverage.*
 .nox/
 .tox/
 .mypy_cache/
-.pytest_cache/
 .hypothesis/
