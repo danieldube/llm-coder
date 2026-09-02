@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-coding"
+version = "0.1.0"
+description = "Python implementation of llm-coding"
+requires-python = ">=3.8"
+authors = [
+    {name = "Daniel", email = "daniel@example.com"},
+]
+dependencies = [
+    "requests>=2.28.0",
+    "click>=8.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+llm-up = "llm_coding.cli:llm_up"
+llm-down = "llm_coding.cli:llm_down"
+llm-status = "llm_coding.cli:llm_status"
+llm-doctor = "llm_coding.cli:llm_doctor"
+opencode-runpod = "llm_coding.cli:opencode_runpod"
+llm-install = "llm_coding.runtime:install"
+llm-runtime = "llm_coding.runtime:main"
+
+[tool.setuptools]
+package-dir = {"" = "python-src"}
+
+[tool.setuptools.packages.find]
+where = ["python-src"]
+
+[tool.setuptools.data-files]
+"llm_coding/assets/config" = [
+    "config/config.env.example",
+    "config/secrets.env.example",
+    "config/opencode.base.json",
+]
+"llm_coding/assets/remote" = ["remote/ensure-vllm.sh"]

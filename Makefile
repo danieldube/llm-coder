@@ -1,10 +1,10 @@
-.PHONY: install uninstall check
+.PHONY: install test clean
 
 install:
-	./install.sh
+	pip install -e .
 
-uninstall:
-	./uninstall.sh
+test:
+	python -m pytest tests/
 
-check:
-	./tests/static-checks.sh
+clean:
+	rm -rf build/ dist/ *.egg-info/

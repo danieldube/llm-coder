@@ -13,18 +13,21 @@ PORT="$9"
 START_TIMEOUT="${10}"
 
 RUNTIME_ROOT=/workspace/llm-coding
-VLLM_VENV="${RUNTIME_ROOT}/vllm-${VLLM_VERSION}-cu${VLLM_CUDA_VERSION}"
+LOCAL_RUNTIME_ROOT=/opt/llm-coding
+VLLM_VENV="${LOCAL_RUNTIME_ROOT}/vllm-${VLLM_VERSION}-cu${VLLM_CUDA_VERSION}"
 HF_HOME="${RUNTIME_ROOT}/huggingface"
-UV_CACHE_DIR="${RUNTIME_ROOT}/uv-cache"
+UV_CACHE_DIR="${LOCAL_RUNTIME_ROOT}/uv-cache"
 PID_FILE="${RUNTIME_ROOT}/vllm.pid"
 LOG_FILE="${RUNTIME_ROOT}/vllm.log"
 SIGNATURE_FILE="${RUNTIME_ROOT}/runtime.signature"
+VALIDATION_TIMEOUT_SECONDS=300
 
-mkdir -p "${RUNTIME_ROOT}" "${HF_HOME}"
+mkdir -p "${RUNTIME_ROOT}" "${LOCAL_RUNTIME_ROOT}" "${HF_HOME}" "${UV_CACHE_DIR}"
 export HF_HOME UV_CACHE_DIR
 
 command -v curl >/dev/null 2>&1 || { echo "curl is missing in the RunPod image" >&2; exit 1; }
 command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is missing in the RunPod image" >&2; exit 1; }
+command -v timeout >/dev/null 2>&1 || { echo "timeout is missing in the RunPod image" >&2; exit 1; }
 
 if command -v uv >/dev/null 2>&1; then
     UV="$(command -v uv)"
@@ -83,7 +86,7 @@ if [[ ! -x "${VLLM_VENV}/bin/vllm" ]]; then
         exit 1
     fi
 
-    echo "Creating persistent vLLM ${VLLM_VERSION} CUDA ${VLLM_CUDA_VERSION} environment..."
+    echo "Creating local vLLM ${VLLM_VERSION} CUDA ${VLLM_CUDA_VERSION} environment at ${VLLM_VENV}..."
     if [[ ! -x "${VLLM_VENV}/bin/python" ]]; then
         PYTHON_BIN="$(command -v python3)"
         [[ -n "${PYTHON_BIN}" ]] || { echo "python3 is missing in the RunPod image" >&2; exit 1; }
@@ -111,7 +114,7 @@ case "${VLLM_CUDA_VERSION}" in
 esac
 
 echo "Validating vLLM runtime..."
-"${VLLM_VENV}/bin/python" - <<'PY'
+if ! timeout "${VALIDATION_TIMEOUT_SECONDS}" "${VLLM_VENV}/bin/python" - <<'PY'
 import sys
 
 try:
@@ -130,13 +133,21 @@ if not torch.cuda.is_available():
 
 print(f"CUDA device: {torch.cuda.get_device_name(0)}")
 PY
+then
+    echo "vLLM runtime validation did not complete within ${VALIDATION_TIMEOUT_SECONDS}s." >&2
+    echo "This usually means importing torch or initializing CUDA is stuck." >&2
+    exit 1
+fi
 
-actual_cuda="$(
-    "${VLLM_VENV}/bin/python" - <<'PY'
+if ! actual_cuda="$(
+    timeout "${VALIDATION_TIMEOUT_SECONDS}" "${VLLM_VENV}/bin/python" - <<'PY'
 import torch
 print(torch.version.cuda or "")
 PY
-)"
+)"; then
+    echo "Could not read the PyTorch CUDA runtime within ${VALIDATION_TIMEOUT_SECONDS}s." >&2
+    exit 1
+fi
 
 if [[ "${actual_cuda}" != "${EXPECTED_CUDA_VERSION}" ]]; then
     echo "CUDA runtime mismatch: PyTorch reports ${actual_cuda}; expected ${EXPECTED_CUDA_VERSION}" >&2

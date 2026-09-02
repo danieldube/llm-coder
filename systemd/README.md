@@ -1,6 +1,6 @@
 # systemd units
 
-`install.sh` installs these as user units under `~/.config/systemd/user/`.
+`llm-install` installs these as user units under `~/.config/systemd/user/`.
 
 - `llm-coding.socket` listens on the stable local OpenAI-compatible endpoint.
 - `llm-coding-proxy.service` is socket-activated, ensures RunPod/vLLM are ready,

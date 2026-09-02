@@ -3,3 +3,4 @@
 .env
 secrets.env
 .idea/*
+build/

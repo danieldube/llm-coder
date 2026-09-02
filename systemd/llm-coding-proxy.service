@@ -8,5 +8,5 @@ Type=notify
 ExecStartPre=%h/.local/share/llm-coding/bin/runtime-up.sh
 ExecStart=%h/.local/share/llm-coding/bin/socket-proxy.sh
 ExecStopPost=%h/.local/share/llm-coding/bin/runtime-down.sh
-TimeoutStartSec=35min
+TimeoutStartSec=52min
 TimeoutStopSec=3min
