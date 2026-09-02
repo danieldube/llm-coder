@@ -33,33 +33,9 @@ def _systemctl(*args, check=True):
 
 
 def _command_error(result):
-    """Extract error message from command result"""
+    """Return a short diagnostic for an unsuccessful subprocess result."""
     detail = (result.stderr or result.stdout or "unknown systemd error").strip()
     return detail.splitlines()[-1] if detail else "unknown systemd error"
-
-
-def _try_acquire_lock(lock_path: Path, timeout_seconds: int = 30) -> Optional[object]:
-    """
-    Try to acquire a file lock with timeout.
-    
-    Args:
-        lock_path: Path to the lock file
-        timeout_seconds: Maximum time to wait for lock
-        
-    Returns:
-        Lock file descriptor if successful, None if timeout
-    """
-    start_time = time.time()
-    while time.time() - start_time < timeout_seconds:
-        try:
-            lock_file = open(lock_path, "w")
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return lock_file
-        except (OSError, IOError):
-            # Another process holds the lock, wait a bit and try again
-            time.sleep(0.1)
-            continue
-    return None
 
 
 def _executable():
@@ -418,9 +394,10 @@ def main():
         raise SystemExit(f"Usage: {Path(sys.argv[0]).name} {{{', '.join(commands)}}}")
     try:
         commands[sys.argv[1]]()
-    except (OSError, RuntimeError, requests.RequestException) as exc:
+    except (OSError, RuntimeError, requests.RequestException, Exception) as exc:
         if sys.argv[1] == "up":
             _record_activation_failure(str(exc))
+        raise  # Re-raise to ensure proper error propagation
         raise SystemExit(f"{Path(sys.argv[0]).name}: {exc}") from None
 
 

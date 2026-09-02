@@ -60,7 +60,7 @@ def release_lock() -> None:
         if hasattr(acquire_lock, 'fd'):
             fcntl.flock(acquire_lock.fd, fcntl.LOCK_UN)
             os.close(acquire_lock.fd)
-    except:
+    except Exception:
         pass
 
 def create_pod_config(config: Dict[str, str]) -> Dict:
@@ -119,7 +119,9 @@ def wait_for_ssh_connection(host: str, port: int, timeout: int = 120) -> bool:
             result = run_command(cmd, capture_output=True, check=False)
             if result.returncode == 0:
                 return True
-        except:
+        except Exception:
+            # Log the specific exception for debugging but continue the loop
+            logger.debug("SSH connection check failed", exc_info=True)
             pass
         time.sleep(2)
     return False
@@ -194,7 +196,8 @@ def get_systemd_service_info(service_name: str) -> tuple:
         invocation_id = lines[1] if len(lines) > 1 else ""
         
         return active_state, invocation_id
-    except:
+    except Exception:
+        logger.debug(f"Failed to get systemd service info for {service_name}", exc_info=True)
         return "", ""
 
 
@@ -364,7 +367,9 @@ def llm_up():
         initial_invocation = ""
         try:
             _, initial_invocation = get_systemd_service_info("llm-coding-proxy.service")
-        except:
+        except Exception:
+            logger.debug("Failed to get initial invocation ID", exc_info=True)
+            initial_invocation = ""
             pass
 
         # `llm-down` from older installations stopped only the tunnel and
@@ -526,7 +531,8 @@ def llm_status():
             if not status:
                 status = "inactive"
             print(f"{label:<12} {status}")
-        except:
+        except Exception:
+            logger.debug(f"Failed to check systemd service {service}", exc_info=True)
             print(f"{label:<12} unknown")
     
     # Check RunPod status
