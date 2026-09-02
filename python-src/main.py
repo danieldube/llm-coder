@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ConfigManager:
     """Manages configuration loading and validation"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.config_dir = (
             Path(os.environ.get('XDG_CONFIG_HOME', '~/.config')).expanduser()
             / 'llm-coding'
@@ -49,26 +49,26 @@ class ConfigManager:
         if self.config_file.exists():
             with open(self.config_file) as f:
                 for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        if '=' in line:
-                            key, value = line.split('=', 1)
+                    stripped_line = line.strip()
+                    if stripped_line and not stripped_line.startswith('#'):
+                        if '=' in stripped_line:
+                            key, value = stripped_line.split('=', 1)
                             config[key.strip()] = value.strip().strip('"\'')
 
         # Load secrets.env
         if self.secrets_file.exists():
             with open(self.secrets_file) as f:
                 for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        if '=' in line:
-                            key, value = line.split('=', 1)
+                    stripped_line = line.strip()
+                    if stripped_line and not stripped_line.startswith('#'):
+                        if '=' in stripped_line:
+                            key, value = stripped_line.split('=', 1)
                             config[key.strip()] = value.strip().strip('"\'')
 
         return config
 
 
-def main():
+def main() -> None:
     logger.info('Python llm-coding implementation starting...')
 
 

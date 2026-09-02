@@ -3,7 +3,6 @@
 import fcntl
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -43,7 +42,7 @@ def _command_error(result):
 
 def _try_acquire_lock(
     lock_path: Path, timeout_seconds: int = 30
-) -> Optional[object]:
+) -> object | None:
     """
     Try to acquire a file lock with timeout.
 

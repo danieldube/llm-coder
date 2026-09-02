@@ -9,6 +9,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 class ConfigManager:
     """Manages configuration loading and validation"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.config_dir = (
             Path(os.environ.get('XDG_CONFIG_HOME', '~/.config')).expanduser()
             / 'llm-coding'
@@ -54,20 +55,20 @@ class ConfigManager:
         if self.config_file.exists():
             with open(self.config_file) as f:
                 for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        if '=' in line:
-                            key, value = line.split('=', 1)
+                    stripped_line = line.strip()
+                    if stripped_line and not stripped_line.startswith('#'):
+                        if '=' in stripped_line:
+                            key, value = stripped_line.split('=', 1)
                             config[key.strip()] = value.strip().strip('"\'')
 
         # Load secrets.env
         if self.secrets_file.exists():
             with open(self.secrets_file) as f:
                 for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        if '=' in line:
-                            key, value = line.split('=', 1)
+                    stripped_line = line.strip()
+                    if stripped_line and not stripped_line.startswith('#'):
+                        if '=' in stripped_line:
+                            key, value = stripped_line.split('=', 1)
                             config[key.strip()] = value.strip().strip('"\'')
 
         return config
@@ -77,7 +78,7 @@ class ConfigManager:
         required_keys = ['RUNPOD_API_KEY', 'RUNPOD_SSH_KEY', 'RUNPOD_POD_NAME']
         for key in required_keys:
             if key not in config or not config[key]:
-                logger.error(f'Missing required configuration: {key}')
+                logger.error('Missing required configuration: %s', key)
                 return False
         return True
 
@@ -85,13 +86,13 @@ class ConfigManager:
 class RunPodClient:
     """Handles RunPod API interactions"""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str) -> None:
         self.api_key = api_key
         self.base_url = 'https://rest.runpod.io/v1'
 
     def _make_request(
-        self, method: str, path: str, data: dict | None = None
-    ) -> dict:
+        self, method: str, path: str, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Make API request to RunPod"""
         headers = {
             'Authorization': f'Bearer {self.api_key}',
@@ -117,18 +118,19 @@ class RunPodClient:
                     f'{response.status_code}: {detail}'
                 ) from exc
             raise RuntimeError(
-                f'RunPod API {method} {path} failed with HTTP {response.status_code}'
+                f'RunPod API {method} {path} failed with HTTP '
+                f'{response.status_code}'
             ) from exc
         return response.json()
 
-    def get_pods(self) -> list[dict]:
+    def get_pods(self) -> list[dict[str, Any]]:
         """Get list of pods"""
         payload = self._make_request('GET', '/pods')
         return (
             payload.get('data', []) if isinstance(payload, dict) else payload
         )
 
-    def find_pod_by_name(self, name: str) -> dict | None:
+    def find_pod_by_name(self, name: str) -> dict[str, Any] | None:
         """Find pod by name"""
         pods = self.get_pods()
         matching_pods = [pod for pod in pods if pod.get('name') == name]
@@ -136,7 +138,7 @@ class RunPodClient:
             raise ValueError(f"More than one RunPod named '{name}' exists.")
         return matching_pods[0] if matching_pods else None
 
-    def create_pod(self, pod_config: dict) -> str:
+    def create_pod(self, pod_config: dict[str, Any]) -> str:
         """Create a new pod"""
         response = self._make_request('POST', '/pods', pod_config)
         return response['id']
@@ -145,14 +147,14 @@ class RunPodClient:
         """Start an existing pod"""
         self._make_request('POST', f'/pods/{pod_id}/start')
 
-    def get_pod(self, pod_id: str) -> dict:
+    def get_pod(self, pod_id: str) -> dict[str, Any]:
         """Get pod details"""
         return self._make_request('GET', f'/pods/{pod_id}')
 
 
 def fatal(message: str) -> None:
     """Exit with error message"""
-    logger.error(f'ERROR: {message}')
+    logger.error('ERROR: %s', message)
     sys.exit(1)
 
 
