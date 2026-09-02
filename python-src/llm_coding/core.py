@@ -121,14 +121,19 @@ class RunPodClient:
                 f'RunPod API {method} {path} failed with HTTP '
                 f'{response.status_code}'
             ) from exc
-        return response.json()
+        result = response.json()
+        if isinstance(result, dict):
+            return result
+        return {}
 
     def get_pods(self) -> list[dict[str, Any]]:
         """Get list of pods"""
         payload = self._make_request('GET', '/pods')
-        return (
-            payload.get('data', []) if isinstance(payload, dict) else payload
-        )
+        if isinstance(payload, dict) and 'data' in payload:
+            data = payload['data']
+            if isinstance(data, list):
+                return data
+        return []
 
     def find_pod_by_name(self, name: str) -> dict[str, Any] | None:
         """Find pod by name"""
@@ -141,7 +146,11 @@ class RunPodClient:
     def create_pod(self, pod_config: dict[str, Any]) -> str:
         """Create a new pod"""
         response = self._make_request('POST', '/pods', pod_config)
-        return response['id']
+        if isinstance(response, dict) and 'id' in response:
+            id_value = response['id']
+            if isinstance(id_value, str):
+                return id_value
+        return ''
 
     def start_pod(self, pod_id: str) -> None:
         """Start an existing pod"""
@@ -175,6 +184,7 @@ def create_opencode_config(config: dict[str, str], state_dir: Path) -> Path:
     """Render OpenCode configuration"""
     # Read base config
     base_config_path = Path(__file__).parent / 'config' / 'opencode.base.json'
+    base_config: dict[str, Any]
     if not base_config_path.exists():
         # Fallback to using default base config
         base_config = {
@@ -232,14 +242,14 @@ def create_opencode_config(config: dict[str, str], state_dir: Path) -> Path:
 
     # Update provider options
     modified_config['provider']['runpod']['options']['baseURL'] = (
-        f"http://127.0.0.1:{config.get('LOCAL_PROXY_PORT', 18000)}/v1"
+        f"http://127.0.0.1:{config.get('LOCAL_PROXY_PORT', '18000')}/v1"
     )
 
     # Create model configuration
     model_name = config.get('SERVED_MODEL_NAME', 'PLACEHOLDER')
     display_name = config.get('MODEL_DISPLAY_NAME', 'Unknown Model')
-    context_size = int(config.get('CONTEXT_SIZE', 65536))
-    max_output_tokens = int(config.get('MAX_OUTPUT_TOKENS', 16384))
+    context_size = int(config.get('CONTEXT_SIZE', '65536'))
+    max_output_tokens = int(config.get('MAX_OUTPUT_TOKENS', '16384'))
 
     modified_config['provider']['runpod']['models'] = {
         model_name: {

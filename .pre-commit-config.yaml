@@ -11,7 +11,8 @@ repos:
     rev: v1.8.0
     hooks:
       - id: mypy
-        args: [--strict]
+        args: [--strict, --install-types]
+        additional_dependencies: [types-requests]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
