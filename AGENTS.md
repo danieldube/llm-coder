@@ -30,3 +30,6 @@ repos:
 - Keep type stubs in sync with your actual dependencies
 - Regularly update pre-commit hooks to use latest versions
 - Consider adding common type stubs to prevent recurring issues
+- For heterogeneous JSON/config dictionaries, explicitly annotate the top-level
+  value as `dict[str, Any]`; otherwise mypy may infer a common `Collection[str]`
+  value type and reject nested dictionary indexing.
