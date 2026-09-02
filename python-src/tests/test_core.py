@@ -234,6 +234,57 @@ class TestSystemdInstall(unittest.TestCase):
             )
 
 
+class TestAcpRegistration(unittest.TestCase):
+    def test_preserves_existing_agents_and_registers_opencode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            acp_file = home / '.jetbrains' / 'acp.json'
+            acp_file.parent.mkdir()
+            acp_file.write_text(
+                json.dumps(
+                    {'agent_servers': {'Keep Me': {'command': 'other-agent'}}}
+                )
+            )
+            with (
+                patch.object(runtime_module.Path, 'home', return_value=home),
+                patch.object(sys, 'argv', ['/opt/llm-coding/bin/llm-runtime']),
+            ):
+                runtime_module._ensure_acp_registration({})
+
+            acp = json.loads(acp_file.read_text())
+            self.assertEqual(acp_file.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(
+                acp['agent_servers']['Keep Me']['command'], 'other-agent'
+            )
+            self.assertEqual(
+                acp['agent_servers']['OpenCode RunPod'],
+                {
+                    'command': '/opt/llm-coding/bin/opencode-runpod',
+                    'args': ['acp'],
+                },
+            )
+
+    def test_runtime_up_registers_acp_before_other_setup(self):
+        manager = MagicMock()
+        manager.load_config.return_value = {'RUNPOD_SSH_KEY': '/tmp/test-key'}
+        manager.validate_config.return_value = True
+        with (
+            patch.object(
+                runtime_module, 'ConfigManager', return_value=manager
+            ),
+            patch.object(runtime_module, '_clear_activation_failure'),
+            patch.object(
+                runtime_module, '_ensure_acp_registration'
+            ) as register,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, 'SSH public key not found'
+            ):
+                runtime_module.up()
+
+        register.assert_called_once_with({'RUNPOD_SSH_KEY': '/tmp/test-key'})
+
+
 class TestRuntimeReadySummary(unittest.TestCase):
     def test_reports_verified_runtime_and_integrations(self):
         response = MagicMock()

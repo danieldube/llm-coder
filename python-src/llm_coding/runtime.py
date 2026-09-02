@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -16,23 +17,23 @@ _ACTIVATION_FAILURE_FILE = 'runtime.activation-error'
 _ACTIVATION_STATUS_FILE = 'runtime.activation-status'
 
 
-def _value(config, key, default=''):
+def _value(config: dict, key: str, default: str = '') -> str:
     return os.path.expandvars(os.path.expanduser(config.get(key, default)))
 
 
-def _run(args, **kwargs):
+def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     kwargs.setdefault('check', True)
     kwargs.setdefault('text', True)
     return subprocess.run(args, **kwargs)
 
 
-def _systemctl(*args, check=True):
+def _systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return _run(
         ['systemctl', '--user', *args], check=check, capture_output=True
     )
 
 
-def _command_error(result):
+def _command_error(result: subprocess.CompletedProcess) -> str:
     """Extract error message from command result"""
     detail = (
         result.stderr or result.stdout or 'unknown systemd error'
@@ -71,7 +72,7 @@ def _executable():
     return str(Path(sys.executable).resolve())
 
 
-def _runtime_command():
+def _runtime_command() -> str:
     """Find the runtime console script installed beside the invoking command."""
     candidate = Path(sys.argv[0]).resolve().parent / 'llm-runtime'
     if candidate.is_file() and os.access(candidate, os.X_OK):
@@ -82,7 +83,7 @@ def _runtime_command():
     raise RuntimeError('llm-runtime is not installed; reinstall llm-coding')
 
 
-def _startup_timeout_seconds(config):
+def _startup_timeout_seconds(config) -> int:
     """Return the full socket activation budget used by llm-up."""
     return (
         int(config.get('RUNPOD_START_TIMEOUT_SECONDS', 1200))
@@ -91,14 +92,14 @@ def _startup_timeout_seconds(config):
     )
 
 
-def _user_units_dir():
+def _user_units_dir() -> Path:
     return (
         Path(os.environ.get('XDG_CONFIG_HOME', '~/.config')).expanduser()
         / 'systemd/user'
     )
 
 
-def _render_systemd_units(config):
+def _render_systemd_units(config) -> dict[str, str]:
     runtime = _runtime_command()
     proxy = (
         shutil.which('systemd-socket-proxyd')
@@ -112,13 +113,24 @@ def _render_systemd_units(config):
     idle = _value(config, 'IDLE_SHUTDOWN', '30min')
     startup_timeout = _startup_timeout_seconds(config)
     return {
-        'llm-coding.socket': f"""[Unit]\nDescription=On-demand self-hosted LLM endpoint\n\n[Socket]\nListenStream=127.0.0.1:{port}\nNoDelay=true\nService=llm-coding-proxy.service\n\n[Install]\nWantedBy=sockets.target\n""",
-        'llm-coding-proxy.service': f"""[Unit]\nDescription=On-demand RunPod LLM proxy\nRequires=llm-coding.socket\nAfter=network-online.target llm-coding.socket\n\n[Service]\nType=notify\nExecStartPre={runtime} up\nExecStart={proxy} --exit-idle-time={idle} 127.0.0.1:{_value(config, 'LOCAL_TUNNEL_PORT', '18001')}\nExecStopPost={runtime} down\nTimeoutStartSec={startup_timeout}s\nTimeoutStopSec=3min\n""",
-        'llm-coding-tunnel.service': f"""[Unit]\nDescription=RunPod vLLM SSH tunnel\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={runtime} tunnel\nRestart=on-failure\nRestartSec=5\n""",
+        'llm-coding.socket': (
+            f"""[Unit]\nDescription=On-demand self-hosted LLM endpoint\n\n[Socket]\n"""
+            f"""ListenStream=127.0.0.1:{port}\nNoDelay=true\nService=llm-coding-proxy.service\n\n[Install]\nWantedBy=sockets.target\n"""
+        ),
+        'llm-coding-proxy.service': (
+            f"""[Unit]\nDescription=On-demand RunPod LLM proxy\n"""
+            f"""Requires=llm-coding.socket\nAfter=network-online.target llm-coding.socket\n\n[Service]\nType=notify\n"""
+            f"""ExecStartPre={runtime} up\nExecStart={proxy} --exit-idle-time={idle} 127.0.0.1:{_value(config, 'LOCAL_TUNNEL_PORT', '18001')}\n"""
+            f"""ExecStopPost={runtime} down\nTimeoutStartSec={startup_timeout}s\nTimeoutStopSec=3min\n"""
+        ),
+        'llm-coding-tunnel.service': (
+            f"""[Unit]\nDescription=RunPod vLLM SSH tunnel\nAfter=network-online.target\n\n[Service]\nType=simple\n"""
+            f"""ExecStart={runtime} tunnel\nRestart=on-failure\nRestartSec=5\n"""
+        ),
     }
 
 
-def _asset(*parts):
+def _asset(*parts: str) -> Path:
     """Locate an asset in an editable checkout or a wheel installation."""
     relative = Path(*parts)
     candidates = [
@@ -131,7 +143,46 @@ def _asset(*parts):
     raise RuntimeError(f'Packaged asset is missing: {relative}')
 
 
-def install_systemd(config=None):
+def _ensure_acp_registration(config) -> None:
+    """Register the OpenCode ACP server without affecting other agents."""
+    acp_file = Path.home() / '.jetbrains' / 'acp.json'
+    acp_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        acp = json.loads(acp_file.read_text()) if acp_file.exists() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f'Cannot read JetBrains ACP configuration at {acp_file}'
+        ) from exc
+    if not isinstance(acp, dict):
+        raise RuntimeError(
+            f'JetBrains ACP configuration at {acp_file} must be a JSON object'
+        )
+    defaults = acp.setdefault('default_mcp_settings', {})
+    servers = acp.setdefault('agent_servers', {})
+    if not isinstance(defaults, dict) or not isinstance(servers, dict):
+        raise RuntimeError(
+            f'JetBrains ACP configuration at {acp_file} has invalid sections'
+        )
+    defaults['use_idea_mcp'] = (
+        config.get('ENABLE_IDEA_MCP', 'true').lower() == 'true'
+    )
+    defaults['use_custom_mcp'] = (
+        config.get('ENABLE_CUSTOM_MCP', 'false').lower() == 'true'
+    )
+    servers[config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod')] = {
+        'command': str(Path(sys.argv[0]).resolve().parent / 'opencode-runpod'),
+        'args': ['acp'],
+    }
+    try:
+        acp_file.write_text(json.dumps(acp, indent=2) + '\n')
+        acp_file.chmod(0o600)
+    except OSError as exc:
+        raise RuntimeError(
+            f'Cannot update JetBrains ACP configuration at {acp_file}'
+        ) from exc
+
+
+def install_systemd(config=None) -> None:
     """Install/update the user units required for lazy socket activation."""
     config = config or ConfigManager().load_config()
     user_units = _user_units_dir()
@@ -144,7 +195,7 @@ def install_systemd(config=None):
     _systemctl('enable', '--now', 'llm-coding.socket')
 
 
-def install():
+def install() -> None:
     """Provision the complete local integration from packaged assets."""
     manager = ConfigManager()
     for destination, template in (
@@ -190,32 +241,11 @@ def install():
             ],
             input=installer,
         )
-    acp_file = Path.home() / '.jetbrains/acp.json'
-    acp_file.parent.mkdir(parents=True, exist_ok=True)
-    acp = (
-        json.loads(acp_file.read_text())
-        if acp_file.exists()
-        else {'default_mcp_settings': {}, 'agent_servers': {}}
-    )
-    defaults = acp.setdefault('default_mcp_settings', {})
-    defaults['use_idea_mcp'] = (
-        config.get('ENABLE_IDEA_MCP', 'true').lower() == 'true'
-    )
-    defaults['use_custom_mcp'] = (
-        config.get('ENABLE_CUSTOM_MCP', 'false').lower() == 'true'
-    )
-    acp.setdefault('agent_servers', {})[
-        config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod')
-    ] = {
-        'command': str(Path(sys.argv[0]).resolve().parent / 'opencode-runpod'),
-        'args': ['acp'],
-    }
-    acp_file.write_text(json.dumps(acp, indent=2) + '\n')
-    acp_file.chmod(0o600)
+    _ensure_acp_registration(config)
     install_systemd(config)
 
 
-def ensure_socket(config):
+def ensure_socket(config) -> None:
     user_units = _user_units_dir()
     expected_units = _render_systemd_units(config)
     if any(
@@ -231,7 +261,7 @@ def ensure_socket(config):
         install_systemd(config)
 
 
-def _ssh_base(config, host, port):
+def _ssh_base(config, host: str, port: int) -> list[str]:
     state = ConfigManager().state_dir
     known_hosts = state / 'known_hosts'
     known_hosts.touch(mode=0o600, exist_ok=True)
@@ -263,7 +293,7 @@ def _ssh_base(config, host, port):
     ]
 
 
-def _start_pod_or_raise(client, pod_id, config):
+def _start_pod_or_raise(client, pod_id: str, config) -> None:
     """Start a stopped pod and translate known provider failures into guidance."""
     try:
         client.start_pod(pod_id)
@@ -324,6 +354,7 @@ def up():
     config = manager.load_config()
     if not manager.validate_config(config):
         raise RuntimeError('configuration validation failed')
+    _ensure_acp_registration(config)
     key = Path(_value(config, 'RUNPOD_SSH_KEY'))
     if not key.with_suffix(key.suffix + '.pub').is_file():
         raise RuntimeError(f'SSH public key not found: {key}.pub')
