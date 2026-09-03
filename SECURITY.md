@@ -19,6 +19,9 @@ sandbox**.
   to OpenCode.
 - A dedicated SSH key is used for this stack rather than the developer's main
   SSH identity.
+- Private GHCR images are pulled by RunPod with a dedicated, read-only package
+  token stored as a RunPod registry credential; the local configuration holds
+  only its opaque ID.
 - OpenCode denies external-directory tools, `.env` reads, `git push`, `sudo`,
   and `ssh`; arbitrary shell/build commands require approval.
 - JetBrains custom MCP forwarding is disabled by default.
@@ -32,6 +35,11 @@ The remote inference runtime is a pinned unit: the RunPod base image, CUDA
 runtime, PyTorch CUDA build, vLLM CUDA build, and model revision must be
 changed together or explicitly validated for compatibility. Do not repair CUDA
 mismatches by copying individual CUDA shared libraries into the image.
+
+The runtime-image publishing workflow uses GitHub Actions' short-lived
+`GITHUB_TOKEN`. Do not add a personal GitHub token to repository or Actions
+secrets for publishing. A separate classic PAT with only `read:packages` is
+appropriate for RunPod to pull a private GHCR image.
 
 ## Untrusted repositories
 

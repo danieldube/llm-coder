@@ -11,6 +11,10 @@ The repository was assembled against the following upstream interfaces on
   https://docs.runpod.io/pods/configuration/use-ssh
 - RunPod PyTorch base-image example:
   https://docs.runpod.io/pods/templates/create-custom-template
+- RunPod registry authentication for a Pod:
+  https://docs.runpod.io/api-reference/pods/POST/pods
+- GitHub Container Registry:
+  https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
 - OpenCode providers / OpenAI-compatible custom provider:
   https://opencode.ai/docs/providers
 - OpenCode permissions:

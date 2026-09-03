@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -316,6 +317,39 @@ def _start_pod_or_raise(client, pod_id: str, config) -> None:
         raise
 
 
+def _pod_create_body(
+    config: dict[str, str], public_key: str
+) -> dict[str, Any]:
+    """Build the RunPod create request without exposing registry credentials."""
+    body: dict[str, Any] = {
+        'name': config['RUNPOD_POD_NAME'],
+        'imageName': config['RUNPOD_IMAGE'],
+        'cloudType': config.get('RUNPOD_CLOUD_TYPE', 'SECURE'),
+        'computeType': 'GPU',
+        'gpuTypeIds': [config['RUNPOD_GPU_TYPE']],
+        'gpuTypePriority': 'availability',
+        'gpuCount': 1,
+        'interruptible': False,
+        'supportPublicIp': True,
+        'containerDiskInGb': int(config.get('RUNPOD_CONTAINER_DISK_GB', 40)),
+        'volumeMountPath': config.get(
+            'RUNPOD_VOLUME_MOUNT_PATH', '/workspace'
+        ),
+        'minRAMPerGPU': int(config.get('RUNPOD_MIN_RAM_PER_GPU', 48)),
+        'minVCPUPerGPU': int(config.get('RUNPOD_MIN_VCPU_PER_GPU', 8)),
+        'ports': ['22/tcp'],
+        'env': {'SSH_PUBLIC_KEY': public_key},
+    }
+    registry_auth_id = config.get('RUNPOD_CONTAINER_REGISTRY_AUTH_ID')
+    if registry_auth_id:
+        body['containerRegistryAuthId'] = registry_auth_id
+    volume = config.get('RUNPOD_NETWORK_VOLUME_ID')
+    body['networkVolumeId' if volume else 'volumeInGb'] = volume or int(
+        config.get('RUNPOD_VOLUME_GB', 100)
+    )
+    return body
+
+
 def _clear_activation_failure(manager):
     """Remove a previous activation error before a new runtime attempt."""
     try:
@@ -365,34 +399,9 @@ def up():
         pod = client.find_pod_by_name(config['RUNPOD_POD_NAME'])
         if pod is None:
             _set_activation_status(manager, 'Creating a RunPod pod')
-            body = {
-                'name': config['RUNPOD_POD_NAME'],
-                'imageName': config['RUNPOD_IMAGE'],
-                'cloudType': config.get('RUNPOD_CLOUD_TYPE', 'SECURE'),
-                'computeType': 'GPU',
-                'gpuTypeIds': [config['RUNPOD_GPU_TYPE']],
-                'gpuTypePriority': 'availability',
-                'gpuCount': 1,
-                'interruptible': False,
-                'supportPublicIp': True,
-                'containerDiskInGb': int(
-                    config.get('RUNPOD_CONTAINER_DISK_GB', 40)
-                ),
-                'volumeMountPath': config.get(
-                    'RUNPOD_VOLUME_MOUNT_PATH', '/workspace'
-                ),
-                'minRAMPerGPU': int(config.get('RUNPOD_MIN_RAM_PER_GPU', 48)),
-                'minVCPUPerGPU': int(config.get('RUNPOD_MIN_VCPU_PER_GPU', 8)),
-                'ports': ['22/tcp'],
-                'env': {
-                    'SSH_PUBLIC_KEY': key.with_suffix(key.suffix + '.pub')
-                    .read_text()
-                    .strip()
-                },
-            }
-            volume = config.get('RUNPOD_NETWORK_VOLUME_ID')
-            body['networkVolumeId' if volume else 'volumeInGb'] = (
-                volume or int(config.get('RUNPOD_VOLUME_GB', 100))
+            body = _pod_create_body(
+                config,
+                key.with_suffix(key.suffix + '.pub').read_text().strip(),
             )
             pod_id = client.create_pod(body)
         else:

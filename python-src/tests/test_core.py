@@ -137,6 +137,38 @@ class TestRunPodClient(unittest.TestCase):
 
 
 class TestRuntimeStartPod(unittest.TestCase):
+    def test_pod_create_body_includes_configured_registry_auth(self):
+        config = {
+            'RUNPOD_POD_NAME': 'test-pod',
+            'RUNPOD_IMAGE': 'ghcr.io/example/llm-coding-runtime:1.0.0',
+            'RUNPOD_GPU_TYPE': 'NVIDIA L40S',
+            'RUNPOD_CONTAINER_REGISTRY_AUTH_ID': 'registry-auth-id',
+            'RUNPOD_NETWORK_VOLUME_ID': 'network-volume-id',
+        }
+
+        body = runtime_module._pod_create_body(config, 'ssh-ed25519 AAAA')
+
+        self.assertEqual(body['containerRegistryAuthId'], 'registry-auth-id')
+        self.assertEqual(body['networkVolumeId'], 'network-volume-id')
+        self.assertEqual(body['env'], {'SSH_PUBLIC_KEY': 'ssh-ed25519 AAAA'})
+        self.assertEqual(
+            body['ports'],
+            ['22/tcp'],
+        )
+
+    def test_pod_create_body_omits_empty_registry_auth(self):
+        config = {
+            'RUNPOD_POD_NAME': 'test-pod',
+            'RUNPOD_IMAGE': 'ghcr.io/example/llm-coding-runtime:1.0.0',
+            'RUNPOD_GPU_TYPE': 'NVIDIA L40S',
+            'RUNPOD_CONTAINER_REGISTRY_AUTH_ID': '',
+        }
+
+        body = runtime_module._pod_create_body(config, 'ssh-ed25519 AAAA')
+
+        self.assertNotIn('containerRegistryAuthId', body)
+        self.assertEqual(body['volumeInGb'], 100)
+
     def test_capacity_failure_explains_safe_recovery_for_local_storage(self):
         client = MagicMock()
         client.start_pod.side_effect = RuntimeError(
