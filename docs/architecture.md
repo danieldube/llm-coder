@@ -41,12 +41,16 @@ vLLM -> Qwen3-Coder
 1. OpenCode starts immediately through ACP.
 2. `opencode-runpod` prewarms `127.0.0.1:18000` in the background.
 3. The first connection activates `llm-coding-proxy.service`.
-4. `runtime-up.sh` creates/resumes the named Pod, discovers its current SSH
+4. The runtime reconciles the mode-0600 Pod ID stored in the user state
+   directory with RunPod. A name lookup is used only to adopt an existing Pod
+   when no live persisted identity exists; ambiguous matches stop activation.
+5. The runtime creates or resumes the selected Pod, discovers its current SSH
    address, starts prebuilt vLLM, and starts the SSH tunnel.
-5. `systemd-socket-proxyd` forwards the already-open client connection to the
+6. `systemd-socket-proxyd` forwards the already-open client connection to the
    tunnel.
-6. After the configured idle period, the proxy exits.
-7. `ExecStopPost` stops the tunnel and RunPod, retaining `/workspace`.
+7. After the configured idle period, the proxy exits.
+8. `ExecStopPost` stops the tunnel and persisted RunPod, retaining both the
+   Pod identity and `/workspace` so the next activation reuses it.
 
 ## Security boundary
 

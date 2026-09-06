@@ -17,6 +17,20 @@ import requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+JSONResult = dict[str, Any] | list[Any]
+
+
+class RunPodProtocolError(RuntimeError):
+    """Raised when RunPod returns JSON that violates an endpoint contract."""
+
+
+class RunPodAPIError(RuntimeError):
+    """Raised when RunPod returns an unsuccessful HTTP response."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class ConfigManager:
     """Manages configuration loading and validation"""
@@ -92,7 +106,7 @@ class RunPodClient:
 
     def _make_request(
         self, method: str, path: str, data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    ) -> JSONResult:
         """Make API request to RunPod"""
         headers = {
             'Authorization': f'Bearer {self.api_key}',
@@ -113,27 +127,58 @@ class RunPodClient:
             # to diagnose from the journal.
             detail = response.text.strip()
             if detail:
-                raise RuntimeError(
+                raise RunPodAPIError(
                     f'RunPod API {method} {path} failed with HTTP '
-                    f'{response.status_code}: {detail}'
+                    f'{response.status_code}: {detail}',
+                    response.status_code,
                 ) from exc
-            raise RuntimeError(
+            raise RunPodAPIError(
                 f'RunPod API {method} {path} failed with HTTP '
-                f'{response.status_code}'
+                f'{response.status_code}',
+                response.status_code,
             ) from exc
-        result = response.json()
-        if isinstance(result, dict):
-            return result
-        return {}
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise RunPodProtocolError(
+                f'RunPod API {method} {path} returned invalid JSON'
+            ) from exc
+        if not isinstance(result, (dict, list)):
+            raise RunPodProtocolError(
+                f'RunPod API {method} {path} returned '
+                f'{type(result).__name__}; expected an object or array'
+            )
+        return result
+
+    @staticmethod
+    def _validate_pod(value: Any, endpoint: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise RunPodProtocolError(
+                f'RunPod API {endpoint} returned a pod that is not an object'
+            )
+        for field in ('id', 'name', 'desiredStatus'):
+            if not isinstance(value.get(field), str) or not value[field]:
+                raise RunPodProtocolError(
+                    f'RunPod API {endpoint} returned a pod without a valid '
+                    f'{field}'
+                )
+        return value
 
     def get_pods(self) -> list[dict[str, Any]]:
         """Get list of pods"""
         payload = self._make_request('GET', '/pods')
-        if isinstance(payload, dict) and 'data' in payload:
-            data = payload['data']
-            if isinstance(data, list):
-                return data
-        return []
+        if isinstance(payload, list):
+            pods = payload
+        elif set(payload) == {'data'} and isinstance(payload['data'], list):
+            # Compatibility with the legacy API envelope.  Do not accept
+            # arbitrary objects as an empty pod collection.
+            pods = payload['data']
+        else:
+            raise RunPodProtocolError(
+                'RunPod API GET /pods expected an array (or legacy '
+                '{"data": [...]} envelope)'
+            )
+        return [self._validate_pod(pod, 'GET /pods') for pod in pods]
 
     def find_pod_by_name(self, name: str) -> dict[str, Any] | None:
         """Find pod by name"""
@@ -146,19 +191,45 @@ class RunPodClient:
     def create_pod(self, pod_config: dict[str, Any]) -> str:
         """Create a new pod"""
         response = self._make_request('POST', '/pods', pod_config)
-        if isinstance(response, dict) and 'id' in response:
-            id_value = response['id']
-            if isinstance(id_value, str):
-                return id_value
-        return ''
+        if not isinstance(response, dict):
+            raise RunPodProtocolError(
+                'RunPod API POST /pods expected an object'
+            )
+        id_value = response.get('id')
+        if not isinstance(id_value, str) or not id_value:
+            raise RunPodProtocolError(
+                'RunPod API POST /pods returned no valid pod id'
+            )
+        return id_value
 
     def start_pod(self, pod_id: str) -> None:
         """Start an existing pod"""
-        self._make_request('POST', f'/pods/{pod_id}/start')
+        self._validate_action_response('start', pod_id)
+
+    def stop_pod(self, pod_id: str) -> None:
+        """Stop a running pod."""
+        self._validate_action_response('stop', pod_id)
+
+    def _validate_action_response(self, action: str, pod_id: str) -> None:
+        endpoint = f'/pods/{pod_id}/{action}'
+        response = self._make_request('POST', endpoint)
+        pod = self._validate_pod(response, f'POST {endpoint}')
+        if pod['id'] != pod_id:
+            raise RunPodProtocolError(
+                f'RunPod API POST {endpoint} returned a different pod id'
+            )
 
     def get_pod(self, pod_id: str) -> dict[str, Any]:
         """Get pod details"""
-        return self._make_request('GET', f'/pods/{pod_id}')
+        endpoint = f'/pods/{pod_id}'
+        pod = self._validate_pod(
+            self._make_request('GET', endpoint), f'GET {endpoint}'
+        )
+        if pod['id'] != pod_id:
+            raise RunPodProtocolError(
+                f'RunPod API GET {endpoint} returned a different pod id'
+            )
+        return pod
 
 
 def fatal(message: str) -> None:
