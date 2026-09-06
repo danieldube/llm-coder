@@ -20,7 +20,7 @@ def _definitions(module: object) -> set[str]:
     return {
         node.name
         for node in ast.walk(ast.parse(_source(module)))
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     }
 
 

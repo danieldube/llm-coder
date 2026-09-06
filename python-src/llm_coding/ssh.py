@@ -39,7 +39,9 @@ def _read_endpoint(state_dir: Path) -> dict[str, Any] | None:
         or not isinstance(value.get('host'), str)
         or not isinstance(value.get('port'), int)
     ):
-        raise RuntimeError(f'Persisted SSH endpoint state at {path} is invalid')
+        raise RuntimeError(
+            f'Persisted SSH endpoint state at {path} is invalid'
+        )
     return value
 
 
@@ -100,7 +102,9 @@ def prepare_endpoint(
         capture_output=True,
     )
     if result.returncode:
-        raise RuntimeError(f'Could not remove obsolete SSH endpoint {old_name}')
+        raise RuntimeError(
+            f'Could not remove obsolete SSH endpoint {old_name}'
+        )
     _write_endpoint(state_dir, pod_id, host, port)
 
 
