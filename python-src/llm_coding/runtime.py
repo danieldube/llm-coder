@@ -1,117 +1,72 @@
-"""Runtime and systemd integration for the on-demand RunPod endpoint."""
+"""Lifecycle orchestration for the on-demand RunPod endpoint."""
 
 import fcntl
 import importlib.resources
-import json
-import os
-import shutil
-import subprocess
 import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import requests
 
-from .config import Settings
-from .core import ConfigManager, RunPodAPIError, RunPodClient
+from .config import ConfigManager, Settings
+from .interfaces import (
+    Clock,
+    CommandRunner,
+    RuntimeState,
+    Sleeper,
+    SystemdController,
+)
+from .opencode import (
+    ensure_acp_registration,
+    ensure_installed,
+    remove_acp_registration,
+)
+from .runpod import RunPodAPIError, RunPodClient, pod_create_body
+from .ssh import command as ssh_command
+from .ssh import exec_tunnel
+from .state import (
+    ACTIVATION_FAILURE_FILE,
+    ACTIVATION_STATUS_FILE,
+    FileStateStore,
+)
+from .systemd import Systemd, run_command
+from .systemd import ensure_socket as systemd_ensure_socket
+from .systemd import install as systemd_install
 
-_ACTIVATION_FAILURE_FILE = 'runtime.activation-error'
-_ACTIVATION_STATUS_FILE = 'runtime.activation-status'
-_POD_STATE_FILE = 'runtime.pod-id'
+
+class PodProvider(Protocol):
+    def find_pod_by_name(self, name: str) -> dict[str, Any] | None: ...
+    def get_pod(self, pod_id: str) -> dict[str, Any]: ...
+    def create_pod(self, pod_config: dict[str, Any]) -> str: ...
+    def start_pod(self, pod_id: str) -> None: ...
+    def stop_pod(self, pod_id: str) -> None: ...
 
 
-def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
-    kwargs.setdefault('check', True)
-    kwargs.setdefault('text', True)
-    return subprocess.run(args, **kwargs)
+@dataclass(frozen=True)
+class RuntimeDependencies:
+    """Explicit side-effect dependencies for lifecycle orchestration."""
 
+    run: CommandRunner = run_command
+    monotonic: Clock = time.monotonic
+    sleep: Sleeper = time.sleep
+    systemd: SystemdController | None = None
 
-def _systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return _run(
-        ['systemctl', '--user', *args], check=check, capture_output=True
-    )
-
-
-def _command_error(result: subprocess.CompletedProcess) -> str:
-    """Extract error message from command result"""
-    detail = (
-        result.stderr or result.stdout or 'unknown systemd error'
-    ).strip()
-    return detail.splitlines()[-1] if detail else 'unknown systemd error'
+    def systemd_controller(self) -> SystemdController:
+        return self.systemd or Systemd(self.run)
 
 
 @contextmanager
 def _lifecycle_lock(manager: ConfigManager) -> Iterator[None]:
-    """Serialize lifecycle changes through the runtime's sole lock path."""
-    with open(manager.state_dir / 'runtime.lock', 'w') as lock:
+    with (manager.state_dir / 'runtime.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
 
 
-def _executable():
-    """Return the interpreter used by the installed console scripts."""
-    return str(Path(sys.executable).resolve())
-
-
-def _runtime_command() -> str:
-    """Find the runtime console script installed beside the invoking command."""
-    candidate = Path(sys.argv[0]).resolve().parent / 'llm-runtime'
-    if candidate.is_file() and os.access(candidate, os.X_OK):
-        return str(candidate)
-    command = shutil.which('llm-runtime')
-    if command:
-        return command
-    raise RuntimeError('llm-runtime is not installed; reinstall llm-coding')
-
-
-def _startup_timeout_seconds(config: Settings) -> int:
-    """Return the full socket activation budget used by llm-up."""
-    return config.startup_timeout_seconds
-
-
-def _user_units_dir() -> Path:
-    return (
-        Path(os.environ.get('XDG_CONFIG_HOME', '~/.config')).expanduser()
-        / 'systemd/user'
-    )
-
-
-def _render_systemd_units(config: Settings) -> dict[str, str]:
-    runtime = _runtime_command()
-    proxy = (
-        shutil.which('systemd-socket-proxyd')
-        or '/usr/lib/systemd/systemd-socket-proxyd'
-    )
-    if not Path(proxy).exists():
-        raise RuntimeError(
-            'systemd-socket-proxyd is required but was not found'
-        )
-    port = config.local_proxy_port
-    idle = config.idle_shutdown
-    startup_timeout = _startup_timeout_seconds(config)
-    return {
-        'llm-coding.socket': (
-            f"""[Unit]\nDescription=On-demand self-hosted LLM endpoint\n\n[Socket]\n"""
-            f"""ListenStream=127.0.0.1:{port}\nNoDelay=true\nService=llm-coding-proxy.service\n\n[Install]\nWantedBy=sockets.target\n"""
-        ),
-        'llm-coding-proxy.service': (
-            f"""[Unit]\nDescription=On-demand RunPod LLM proxy\n"""
-            f"""Requires=llm-coding.socket\nAfter=network-online.target llm-coding.socket\n\n[Service]\nType=notify\n"""
-            f"""ExecStartPre={runtime} up\nExecStart={proxy} --exit-idle-time={idle} 127.0.0.1:{config.local_tunnel_port}\n"""
-            f"""ExecStopPost={runtime} down\nTimeoutStartSec={startup_timeout}s\nTimeoutStopSec=3min\n"""
-        ),
-        'llm-coding-tunnel.service': (
-            f"""[Unit]\nDescription=RunPod vLLM SSH tunnel\nAfter=network-online.target\n\n[Service]\nType=simple\n"""
-            f"""ExecStart={runtime} tunnel\nRestart=on-failure\nRestartSec=5\n"""
-        ),
-    }
-
-
 def _asset_text(*parts: str) -> str:
-    """Read an installation resource from the package."""
     relative = '/'.join(parts)
     if len(parts) != 2:
         raise RuntimeError(f'Invalid packaged resource path: {relative!r}')
@@ -121,61 +76,24 @@ def _asset_text(*parts: str) -> str:
         )
     except (FileNotFoundError, OSError) as exc:
         raise RuntimeError(
-            f'Required packaged resource {relative!r} is missing; '
-            'reinstall llm-coding'
+            f'Required packaged resource {relative!r} is missing; reinstall llm-coding'  # noqa: E501
         ) from exc
 
 
-def _ensure_acp_registration(config: Settings) -> None:
-    """Register the OpenCode ACP server without affecting other agents."""
-    acp_file = Path.home() / '.jetbrains' / 'acp.json'
-    acp_file.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        acp = json.loads(acp_file.read_text()) if acp_file.exists() else {}
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            f'Cannot read JetBrains ACP configuration at {acp_file}'
-        ) from exc
-    if not isinstance(acp, dict):
-        raise RuntimeError(
-            f'JetBrains ACP configuration at {acp_file} must be a JSON object'
-        )
-    defaults = acp.setdefault('default_mcp_settings', {})
-    servers = acp.setdefault('agent_servers', {})
-    if not isinstance(defaults, dict) or not isinstance(servers, dict):
-        raise RuntimeError(
-            f'JetBrains ACP configuration at {acp_file} has invalid sections'
-        )
-    defaults['use_idea_mcp'] = config.enable_idea_mcp
-    defaults['use_custom_mcp'] = config.enable_custom_mcp
-    servers[config.jetbrains_agent_name] = {
-        'command': str(Path(sys.argv[0]).resolve().parent / 'opencode-runpod'),
-        'args': ['acp'],
-    }
-    try:
-        acp_file.write_text(json.dumps(acp, indent=2) + '\n')
-        acp_file.chmod(0o600)
-    except OSError as exc:
-        raise RuntimeError(
-            f'Cannot update JetBrains ACP configuration at {acp_file}'
-        ) from exc
+def _startup_timeout_seconds(config: Settings) -> int:
+    return config.startup_timeout_seconds
 
 
 def install_systemd(config: Settings | None = None) -> None:
-    """Install/update the user units required for lazy socket activation."""
-    config = config or ConfigManager().load_settings()
-    user_units = _user_units_dir()
-    user_units.mkdir(parents=True, exist_ok=True)
-    units = _render_systemd_units(config)
-    for name, contents in units.items():
-        (user_units / name).write_text(contents)
-    _systemctl('daemon-reload')
-    _systemctl('reset-failed', 'llm-coding.socket', 'llm-coding-proxy.service')
-    _systemctl('enable', '--now', 'llm-coding.socket')
+    systemd_install(config or ConfigManager().load_settings())
 
 
-def install() -> None:
-    """Provision the complete local integration from packaged assets."""
+def ensure_socket(config: Settings) -> None:
+    systemd_ensure_socket(config)
+
+
+def install(dependencies: RuntimeDependencies | None = None) -> None:
+    deps = dependencies or RuntimeDependencies()
     manager = ConfigManager()
     manager.ensure_directories()
     for destination, template in (
@@ -186,10 +104,10 @@ def install() -> None:
             destination.write_text(_asset_text(template))
             destination.chmod(0o600)
     config = manager.load_settings()
-    key = Path(str(config.runpod_ssh_key))
+    key = config.runpod_ssh_key
     if not key.exists():
         key.parent.mkdir(parents=True, exist_ok=True)
-        _run(
+        deps.run(
             [
                 'ssh-keygen',
                 '-q',
@@ -203,306 +121,139 @@ def install() -> None:
                 'runpod-llm-coding',
             ]
         )
-    opencode = Path.home() / '.opencode/bin/opencode'
-    if (
-        not opencode.exists()
-        or _run(
-            [str(opencode), '--version'], check=False, capture_output=True
-        ).stdout.strip()
-        != config.opencode_version
-    ):
-        installer = requests.get(
-            'https://opencode.ai/install', timeout=60
-        ).text
-        _run(
-            [
-                'bash',
-                '-s',
-                '--',
-                '--version',
-                config.opencode_version,
-                '--no-modify-path',
-            ],
-            input=installer,
-        )
-    _ensure_acp_registration(config)
-    install_systemd(config)
-
-
-def ensure_socket(config: Settings) -> None:
-    user_units = _user_units_dir()
-    expected_units = _render_systemd_units(config)
-    if any(
-        (user_units / name).read_text() != contents
-        if (user_units / name).exists()
-        else True
-        for name, contents in expected_units.items()
-    ):
-        install_systemd(config)
-        return
-    result = _systemctl('is-active', 'llm-coding.socket', check=False)
-    if result.returncode != 0:
-        install_systemd(config)
-
-
-def _ssh_base(config: Settings, host: str, port: int) -> list[str]:
-    state = ConfigManager().state_dir
-    known_hosts = state / 'known_hosts'
-    known_hosts.touch(mode=0o600, exist_ok=True)
-    _run(
-        ['ssh-keygen', '-R', f'[{host}]:{port}', '-f', str(known_hosts)],
-        check=False,
-        capture_output=True,
-    )
-    return [
-        'ssh',
-        '-T',
-        '-i',
-        str(config.runpod_ssh_key),
-        '-p',
-        str(port),
-        '-o',
-        'BatchMode=yes',
-        '-o',
-        'ConnectTimeout=5',
-        '-o',
-        'ServerAliveInterval=30',
-        '-o',
-        'ServerAliveCountMax=3',
-        '-o',
-        'StrictHostKeyChecking=accept-new',
-        '-o',
-        f'UserKnownHostsFile={known_hosts}',
-        f'root@{host}',
-    ]
+    ensure_installed(config, deps.run)
+    ensure_acp_registration(config)
+    systemd_install(config, deps.systemd_controller())
 
 
 def _start_pod_or_raise(
-    client: RunPodClient, pod_id: str, config: Settings
+    client: PodProvider, pod_id: str, config: Settings
 ) -> None:
-    """Start a stopped pod and translate known provider failures into guidance."""
     try:
         client.start_pod(pod_id)
     except RuntimeError as exc:
-        message = str(exc)
-        if 'not enough free gpus on the host machine' in message.lower():
-            storage_warning = (
-                'This pod uses a detachable network volume, so it can be recreated '
-                "without losing the volume's contents."
-                if config.runpod_network_volume_id
-                else 'This pod uses pod-local storage (RUNPOD_NETWORK_VOLUME_ID is empty); '
-                'deleting it can discard the cached model and files in /workspace.'
+        if 'not enough free gpus on the host machine' not in str(exc).lower():
+            raise
+        storage = (
+            'This pod uses a detachable network volume, so it can be recreated without losing the volume contents.'  # noqa: E501
+            if (
+                config.get('RUNPOD_NETWORK_VOLUME_ID', '')
+                if isinstance(config, dict)
+                else config.runpod_network_volume_id
             )
-            raise RuntimeError(
-                f'RunPod cannot resume pod {pod_id}: its assigned host has no free GPU. '
-                'Wait a few minutes and run llm-up again. If capacity does not return, '
-                'create a replacement pod with a new RUNPOD_POD_NAME on an available GPU. '
-                f'{storage_warning}'
-            ) from None
-        raise
-
-
-def _pod_create_body(config: Settings, public_key: str) -> dict[str, Any]:
-    """Build the RunPod create request without exposing registry credentials."""
-    body: dict[str, Any] = {
-        'name': config.runpod_pod_name,
-        'imageName': config.runpod_image,
-        'cloudType': config.runpod_cloud_type,
-        'computeType': 'GPU',
-        'gpuTypeIds': [config.runpod_gpu_type],
-        'gpuTypePriority': 'availability',
-        'gpuCount': 1,
-        'interruptible': False,
-        'supportPublicIp': True,
-        'containerDiskInGb': config.runpod_container_disk_gb,
-        'volumeMountPath': str(config.runpod_volume_mount_path),
-        'minRAMPerGPU': config.runpod_min_ram_per_gpu,
-        'minVCPUPerGPU': config.runpod_min_vcpu_per_gpu,
-        'ports': ['22/tcp'],
-        'env': {'SSH_PUBLIC_KEY': public_key},
-    }
-    registry_auth_id = config.runpod_container_registry_auth_id
-    if registry_auth_id:
-        body['containerRegistryAuthId'] = registry_auth_id
-    volume = config.runpod_network_volume_id
-    body['networkVolumeId' if volume else 'volumeInGb'] = volume or int(
-        config.runpod_volume_gb
-    )
-    return body
-
-
-def _read_pod_id(manager: ConfigManager) -> str | None:
-    """Read the previously selected pod ID, rejecting corrupt state."""
-    path = manager.state_dir / _POD_STATE_FILE
-    if not path.exists():
-        return None
-    try:
-        pod_id = path.read_text().strip()
-    except OSError as exc:
-        raise RuntimeError(
-            f'Cannot read persisted RunPod state at {path}'
-        ) from exc
-    if not pod_id or '\n' in pod_id or '\r' in pod_id:
-        raise RuntimeError(f'Persisted RunPod state at {path} is invalid')
-    return pod_id
-
-
-def _write_pod_id(manager: ConfigManager, pod_id: str) -> None:
-    """Atomically persist the selected pod ID with private permissions."""
-    path = manager.state_dir / _POD_STATE_FILE
-    temporary = path.with_name(path.name + '.tmp')
-    try:
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            0o600,
+            else 'This pod uses pod-local storage (RUNPOD_NETWORK_VOLUME_ID is empty); deleting it can discard the cached model and files in /workspace.'  # noqa: E501
         )
-        with os.fdopen(descriptor, 'w') as state_file:
-            state_file.write(pod_id + '\n')
-            state_file.flush()
-            os.fsync(state_file.fileno())
-        temporary.replace(path)
-        path.chmod(0o600)
-    except OSError as exc:
-        temporary.unlink(missing_ok=True)
         raise RuntimeError(
-            f'Cannot persist selected RunPod ID at {path}'
-        ) from exc
-
-
-def _forget_pod_id(manager: ConfigManager) -> None:
-    try:
-        (manager.state_dir / _POD_STATE_FILE).unlink(missing_ok=True)
-    except OSError as exc:
-        raise RuntimeError('Cannot clear persisted RunPod state') from exc
+            f'RunPod cannot resume pod {pod_id}: its assigned host has no free GPU. '  # noqa: E501
+            'Wait a few minutes and run llm-up again. If capacity does not return, '  # noqa: E501
+            'create a replacement pod with a new RUNPOD_POD_NAME on an available GPU. '  # noqa: E501
+            + storage
+        ) from None
 
 
 def _select_pod(
-    manager: ConfigManager, client: RunPodClient, name: str
+    state: RuntimeState, client: PodProvider, name: str
 ) -> dict[str, Any] | None:
-    """Reconcile persisted identity, using names only for initial adoption."""
-    persisted_id = _read_pod_id(manager)
+    if hasattr(state, 'state_dir'):
+        state = FileStateStore(state.state_dir)  # type: ignore[assignment, union-attr]
+    persisted_id = state.read_pod_id()
     if persisted_id:
         try:
             return client.get_pod(persisted_id)
         except RunPodAPIError as exc:
             if exc.status_code != 404:
                 raise
-            _forget_pod_id(manager)
+            state.forget_pod_id()
     pod = client.find_pod_by_name(name)
     if pod is not None:
-        _write_pod_id(manager, pod['id'])
+        state.write_pod_id(str(pod['id']))
     return pod
 
 
-def _clear_activation_failure(manager):
-    """Remove a previous activation error before a new runtime attempt."""
-    try:
-        (manager.state_dir / _ACTIVATION_FAILURE_FILE).unlink(missing_ok=True)
-    except OSError:
-        # The actual activation error is more useful than a best-effort
-        # cleanup failure, and will still be written by main below.
-        pass
+def _read_pod_id(manager: ConfigManager) -> str | None:
+    return FileStateStore(manager.state_dir).read_pod_id()
 
 
-def _set_activation_status(manager, message):
-    """Publish one human-readable lifecycle stage for the local CLI."""
-    try:
-        path = manager.state_dir / _ACTIVATION_STATUS_FILE
-        path.write_text(message.strip() + '\n')
-        path.chmod(0o600)
-    except OSError:
-        # Status reporting must never prevent the runtime from starting.
-        pass
+def _write_pod_id(manager: ConfigManager, pod_id: str) -> None:
+    FileStateStore(manager.state_dir).write_pod_id(pod_id)
 
 
-def _record_activation_failure(message):
-    """Persist the actionable pre-start failure for the llm-up client."""
-    try:
-        path = ConfigManager().state_dir / _ACTIVATION_FAILURE_FILE
-        path.write_text(message.strip() + '\n')
-        path.chmod(0o600)
-    except OSError:
-        # systemd's stderr remains available as a fallback diagnostic.
-        pass
+def _forget_pod_id(manager: ConfigManager) -> None:
+    FileStateStore(manager.state_dir).forget_pod_id()
 
 
-def up():
+def up(
+    dependencies: RuntimeDependencies | None = None,
+    provider: PodProvider | None = None,
+) -> None:
+    deps = dependencies or RuntimeDependencies()
     manager = ConfigManager()
     config = manager.load_settings()
-    _clear_activation_failure(manager)
-    _ensure_acp_registration(config)
-    key = Path(str(config.runpod_ssh_key))
-    if not key.with_suffix(key.suffix + '.pub').is_file():
-        raise RuntimeError(f'SSH public key not found: {key}.pub')
+    state = FileStateStore(manager.state_dir)
+    state.clear_activation_failure()
+    ensure_acp_registration(config)
+    public_key = config.runpod_ssh_key.with_suffix(
+        config.runpod_ssh_key.suffix + '.pub'
+    )
+    if not public_key.is_file():
+        raise RuntimeError(f'SSH public key not found: {public_key}')
     with _lifecycle_lock(manager):
-        _set_activation_status(manager, 'Checking the RunPod pod')
-        client = RunPodClient(config.runpod_api_key)
-        pod = _select_pod(manager, client, config.runpod_pod_name)
+        state.set_activation_status('Checking the RunPod pod')
+        client = provider or RunPodClient(config.runpod_api_key)
+        pod = _select_pod(state, client, config.runpod_pod_name)
         if pod is None:
-            _set_activation_status(manager, 'Creating a RunPod pod')
-            body = _pod_create_body(
-                config,
-                key.with_suffix(key.suffix + '.pub').read_text().strip(),
+            state.set_activation_status('Creating a RunPod pod')
+            pod_id = client.create_pod(
+                pod_create_body(config, public_key.read_text().strip())
             )
-            pod_id = client.create_pod(body)
-            _write_pod_id(manager, pod_id)
+            state.write_pod_id(pod_id)
         else:
-            pod_id = pod['id']
-            status = pod.get('desiredStatus')
-            if status == 'TERMINATED':
+            pod_id = str(pod['id'])
+            if pod.get('desiredStatus') == 'TERMINATED':
                 raise RuntimeError(
-                    f'RunPod {pod_id} is TERMINATED; delete it or change RUNPOD_POD_NAME'
+                    f'RunPod {pod_id} is TERMINATED; delete it or change RUNPOD_POD_NAME'  # noqa: E501
                 )
-            if status == 'EXITED':
-                _set_activation_status(
-                    manager, 'Starting the stopped RunPod pod'
-                )
+            if pod.get('desiredStatus') == 'EXITED':
+                state.set_activation_status('Starting the stopped RunPod pod')
                 _start_pod_or_raise(client, pod_id, config)
-        deadline = time.monotonic() + int(config.runpod_start_timeout_seconds)
-        host = port = None
-        _set_activation_status(manager, 'Waiting for RunPod to expose SSH')
-        while time.monotonic() < deadline:
+        deadline = deps.monotonic() + config.runpod_start_timeout_seconds
+        host: str | None = None
+        port: int | None = None
+        state.set_activation_status('Waiting for RunPod to expose SSH')
+        while deps.monotonic() < deadline:
             pod = client.get_pod(pod_id)
-            host, port = (
-                pod.get('publicIp'),
-                pod.get('portMappings', {}).get('22'),
-            )
+            host = pod.get('publicIp')
+            port = pod.get('portMappings', {}).get('22')
             if host and port:
                 break
-            time.sleep(5)
+            deps.sleep(5)
         if not host or not port:
             raise RuntimeError('RunPod did not expose SSH before timeout')
-        ssh = _ssh_base(config, host, port)
-        _set_activation_status(manager, 'Waiting for the RunPod SSH service')
-        while time.monotonic() < deadline:
+        ssh = ssh_command(config, manager.state_dir, host, port, deps.run)
+        state.set_activation_status('Waiting for the RunPod SSH service')
+        while deps.monotonic() < deadline:
             if (
-                _run(
+                deps.run(
                     [*ssh, 'true'], check=False, capture_output=True
                 ).returncode
                 == 0
             ):
                 break
-            # A resumed RunPod may be assigned a new external SSH endpoint.
             refreshed = client.get_pod(pod_id)
-            refreshed_host = refreshed.get('publicIp')
-            refreshed_port = refreshed.get('portMappings', {}).get('22')
-            if (
-                refreshed_host
-                and refreshed_port
-                and (refreshed_host, refreshed_port) != (host, port)
-            ):
-                host, port = refreshed_host, refreshed_port
-                ssh = _ssh_base(config, host, port)
-            time.sleep(5)
+            new_host = refreshed.get('publicIp')
+            new_port = refreshed.get('portMappings', {}).get('22')
+            if new_host and new_port and (new_host, new_port) != (host, port):
+                host, port = new_host, new_port
+                ssh = ssh_command(
+                    config, manager.state_dir, host, port, deps.run
+                )
+            deps.sleep(5)
         else:
             raise RuntimeError('SSH did not become available before timeout')
-        script = _asset_text('remote/ensure-vllm.sh')
-        _set_activation_status(
-            manager,
-            'Preparing vLLM on RunPod (first start can take several minutes)',
+        state.set_activation_status(
+            'Preparing vLLM on RunPod (first start can take several minutes)'
         )
-        _run(
+        deps.run(
             [
                 *ssh,
                 'bash',
@@ -519,132 +270,81 @@ def up():
                 str(config.remote_vllm_port),
                 str(config.vllm_start_timeout_seconds),
             ],
-            input=script,
+            input=_asset_text('remote/ensure-vllm.sh'),
         )
         (manager.state_dir / 'runtime.env').write_text(
-            f'SSH_HOST={host}\nSSH_PORT={port}\nSSH_KEY={key}\n'
+            f'SSH_HOST={host}\nSSH_PORT={port}\nSSH_KEY={config.runpod_ssh_key}\n'
         )
-        _set_activation_status(manager, 'Starting the local SSH tunnel')
-        _systemctl('restart', 'llm-coding-tunnel.service')
+        state.set_activation_status('Starting the local SSH tunnel')
+        deps.systemd_controller().run('restart', 'llm-coding-tunnel.service')
+        deadline = deps.monotonic() + 60
         endpoint = f'http://127.0.0.1:{config.local_tunnel_port}/v1/models'
-        healthy_until = time.monotonic() + 60
-        _set_activation_status(
-            manager, 'Verifying vLLM through the SSH tunnel'
-        )
-        while time.monotonic() < healthy_until:
+        state.set_activation_status('Verifying vLLM through the SSH tunnel')
+        while deps.monotonic() < deadline:
             try:
                 models = (
                     requests.get(endpoint, timeout=2).json().get('data', [])
                 )
                 if any(
-                    model.get('id') == config.served_model_name
-                    for model in models
+                    item.get('id') == config.served_model_name
+                    for item in models
                 ):
-                    _set_activation_status(manager, 'Runtime ready')
+                    state.set_activation_status('Runtime ready')
                     return
             except (requests.RequestException, ValueError):
                 pass
-            time.sleep(2)
+            deps.sleep(2)
         raise RuntimeError('SSH tunnel did not become healthy')
 
 
-def _remove_clion_opencode_config(config):
-    """Remove only this installation's ACP agent, preserving other agents."""
-    acp_file = Path.home() / '.jetbrains' / 'acp.json'
-    if not acp_file.exists():
-        return
-    try:
-        acp = json.loads(acp_file.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            'Cannot remove the CLion OpenCode entry: repair '
-            f'{acp_file} and rerun integration removal'
-        ) from exc
-    if not isinstance(acp, dict):
-        raise RuntimeError(
-            f'Cannot remove the CLion OpenCode entry: {acp_file} must contain a JSON object'
-        )
-    servers = acp.get('agent_servers', {})
-    if not isinstance(servers, dict):
-        raise RuntimeError(
-            f'Cannot remove the CLion OpenCode entry: {acp_file} has an invalid agent_servers section'
-        )
-    if servers.pop(config.jetbrains_agent_name, None) is None:
-        return
-    temporary = acp_file.with_name(acp_file.name + '.llm-coding.tmp')
-    try:
-        temporary.write_text(json.dumps(acp, indent=2) + '\n')
-        temporary.chmod(0o600)
-        temporary.replace(acp_file)
-    except OSError as exc:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise RuntimeError(
-            f'Cannot update {acp_file}; check that it is writable and rerun '
-            'integration removal'
-        ) from exc
-
-
-def down() -> None:
-    """Idempotently stop transient local and remote runtime resources.
-
-    Durable configuration and the persisted Pod identity deliberately survive
-    this operation so socket activation can reuse the installation later.
-    """
+def down(
+    dependencies: RuntimeDependencies | None = None,
+    provider: PodProvider | None = None,
+) -> None:
+    deps = dependencies or RuntimeDependencies()
     manager = ConfigManager()
     config = manager.load_settings()
-    errors = []
+    state = FileStateStore(manager.state_dir)
+    errors: list[str] = []
     with _lifecycle_lock(manager):
         try:
-            result = _systemctl(
+            result = deps.systemd_controller().run(
                 'stop', 'llm-coding-tunnel.service', check=False
             )
             if result.returncode:
-                errors.append(
-                    f'could not stop the SSH tunnel ({_command_error(result)})'
+                detail = (
+                    (result.stderr or result.stdout or 'unknown systemd error')
+                    .strip()
+                    .splitlines()[-1]
                 )
+                errors.append(f'could not stop the SSH tunnel ({detail})')
         except OSError as exc:
             errors.append(f'could not stop the SSH tunnel ({exc})')
-
-        pod_name = config.runpod_pod_name
-        api_key = config.runpod_api_key
-        if not pod_name or not api_key:
+        try:
+            client = provider or RunPodClient(config.runpod_api_key)
+            pod = _select_pod(state, client, config.runpod_pod_name)
+            if pod and pod.get('desiredStatus') == 'RUNNING':
+                client.stop_pod(str(pod['id']))
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
             errors.append(
-                'could not stop the RunPod pod (set RUNPOD_POD_NAME and RUNPOD_API_KEY, then run llm-down again)'
+                f'could not stop RunPod pod {config.runpod_pod_name} ({exc})'
             )
-        else:
-            try:
-                client = RunPodClient(api_key)
-                pod = _select_pod(manager, client, pod_name)
-                if pod and pod.get('desiredStatus') == 'RUNNING':
-                    client.stop_pod(pod['id'])
-            except (
-                requests.RequestException,
-                RuntimeError,
-                ValueError,
-            ) as exc:
-                errors.append(f'could not stop RunPod pod {pod_name} ({exc})')
-
-        # The SSH endpoint is assigned while a Pod is running and cannot be
-        # reused after it is stopped.  All other generated/configuration state
-        # is durable and belongs to remove_integration(), not idle shutdown.
-        for generated_file in (
-            manager.state_dir / 'runtime.env',
-            manager.state_dir / _ACTIVATION_FAILURE_FILE,
-            manager.state_dir / _ACTIVATION_STATUS_FILE,
+        for name in (
+            'runtime.env',
+            ACTIVATION_FAILURE_FILE,
+            ACTIVATION_STATUS_FILE,
         ):
             try:
-                generated_file.unlink(missing_ok=True)
+                (manager.state_dir / name).unlink(missing_ok=True)
             except OSError as exc:
-                errors.append(f'could not remove {generated_file} ({exc})')
+                errors.append(
+                    f'could not remove {manager.state_dir / name} ({exc})'
+                )
     if errors:
         raise RuntimeError('Shutdown incomplete: ' + '; '.join(errors))
 
 
 def remove_integration() -> None:
-    """Remove this installation's durable OpenCode and JetBrains integration."""
     manager = ConfigManager()
     config = manager.load_settings()
     errors: list[str] = []
@@ -653,7 +353,7 @@ def remove_integration() -> None:
     except OSError as exc:
         errors.append(f'could not remove OpenCode configuration ({exc})')
     try:
-        _remove_clion_opencode_config(config)
+        remove_acp_registration(config)
     except RuntimeError as exc:
         errors.append(str(exc))
     if errors:
@@ -662,34 +362,26 @@ def remove_integration() -> None:
         )
 
 
-def tunnel():
+def tunnel(dependencies: RuntimeDependencies | None = None) -> None:
+    deps = dependencies or RuntimeDependencies()
     manager = ConfigManager()
     values = dict(
-        line.strip().split('=', 1)
+        line.split('=', 1)
         for line in (manager.state_dir / 'runtime.env')
         .read_text()
         .splitlines()
         if '=' in line
     )
-    config = manager.load_settings()
-    ssh = _ssh_base(config, values['SSH_HOST'], int(values['SSH_PORT']))
-    destination = ssh.pop()
-    os.execvp(
-        'ssh',
-        [
-            *ssh,
-            '-N',
-            '-o',
-            'ExitOnForwardFailure=yes',
-            '-L',
-            f'127.0.0.1:{config.local_tunnel_port}:'
-            f'127.0.0.1:{config.remote_vllm_port!s}',
-            destination,
-        ],
+    exec_tunnel(
+        manager.load_settings(),
+        manager.state_dir,
+        values['SSH_HOST'],
+        int(values['SSH_PORT']),
+        deps.run,
     )
 
 
-def main():
+def main() -> None:
     commands = {
         'up': up,
         'down': down,
@@ -708,7 +400,9 @@ def main():
         commands[sys.argv[1]]()
     except (OSError, RuntimeError, requests.RequestException) as exc:
         if sys.argv[1] == 'up':
-            _record_activation_failure(str(exc))
+            FileStateStore(
+                ConfigManager().state_dir
+            ).record_activation_failure(str(exc))
         raise SystemExit(f'{Path(sys.argv[0]).name}: {exc}') from None
 
 

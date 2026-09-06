@@ -22,6 +22,7 @@ from .core import (
     create_opencode_config,
     fatal,
 )
+from .opencode import launch as launch_opencode
 from .runtime import _startup_timeout_seconds, ensure_socket
 from .runtime import down as runtime_down
 from .runtime import install as runtime_install
@@ -756,47 +757,15 @@ def llm_doctor(activate: bool):
     context_settings={'ignore_unknown_options': True, 'allow_extra_args': True}
 )
 @click.pass_context
-def opencode_runpod(ctx):
-    """Run OpenCode with RunPod integration"""
-    logger.info('Starting OpenCode with RunPod integration...')
-
-    # Load configuration
-    config_manager = ConfigManager()
-    config = config_manager.load_settings()
-
-    # Create OpenCode config
-    state_dir = config_manager.state_dir
-    opencode_config_path = create_opencode_config(config, state_dir)
-
-    # Set environment variable for OpenCode
-    os.environ['OPENCODE_CONFIG'] = str(opencode_config_path)
-
-    # Start OpenCode
-    opencode_bin = Path.home() / '.opencode' / 'bin' / 'opencode'
-    if not opencode_bin.exists():
-        fatal(f'OpenCode not found at {opencode_bin}')
-
-    # Warm the model without blocking ACP/OpenCode startup.  The request is
-    # deliberately best-effort, matching the old wrapper.
-    endpoint = f'http://127.0.0.1:{config.local_proxy_port}/v1/models'
-    subprocess.Popen(
-        [
-            'curl',
-            '--fail',
-            '--silent',
-            '--max-time',
-            str(config.startup_timeout_seconds),
-            endpoint,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    # Execute OpenCode
+def opencode_runpod(ctx: click.Context) -> None:
+    """Run OpenCode with RunPod integration."""
+    manager = ConfigManager()
     try:
-        subprocess.run([str(opencode_bin), *ctx.args], check=True)
-    except subprocess.CalledProcessError as e:
-        fatal(f'OpenCode execution failed: {e}')
+        launch_opencode(
+            manager.load_settings(), manager.state_dir, list(ctx.args)
+        )
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+        fatal(f'OpenCode execution failed: {exc}')
 
 
 if __name__ == '__main__':

@@ -228,3 +228,52 @@ def parse_settings(
     if errors:
         raise ConfigurationError(errors)
     return settings
+
+
+class ConfigManager:
+    """Own XDG paths and load the authoritative validated settings."""
+
+    def __init__(self) -> None:
+        self.config_dir = (
+            Path(os.environ.get('XDG_CONFIG_HOME', '~/.config')).expanduser()
+            / 'llm-coding'
+        )
+        self.state_dir = (
+            Path(
+                os.environ.get('XDG_STATE_HOME', '~/.local/state')
+            ).expanduser()
+            / 'llm-coding'
+        )
+        self.install_dir = (
+            Path(
+                os.environ.get('XDG_DATA_HOME', '~/.local/share')
+            ).expanduser()
+            / 'llm-coding'
+        )
+        self.config_file = self.config_dir / 'config.env'
+        self.secrets_file = self.config_dir / 'secrets.env'
+
+    def ensure_directories(self) -> None:
+        """Create private application directories."""
+        for directory in (self.config_dir, self.state_dir, self.install_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+
+    def load_settings(self) -> Settings:
+        """Load configuration without introducing filesystem side effects."""
+        return parse_settings(self.config_file, self.secrets_file)
+
+    def load_config(self) -> dict[str, str]:
+        """Return the legacy unvalidated merged mapping."""
+        errors: list[str] = []
+        values = _read_env(self.config_file, errors)
+        values.update(_read_env(self.secrets_file, errors))
+        if errors:
+            raise ConfigurationError(errors)
+        return values
+
+
+def setting(config: Settings | Mapping[str, str], name: str) -> object:
+    """Read a typed setting while supporting the legacy mapping API."""
+    if isinstance(config, Mapping):
+        return config[name.upper()]
+    return getattr(config, name)
