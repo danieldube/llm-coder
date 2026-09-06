@@ -8,8 +8,10 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 import requests
 
@@ -41,33 +43,12 @@ def _command_error(result: subprocess.CompletedProcess) -> str:
     return detail.splitlines()[-1] if detail else 'unknown systemd error'
 
 
-def _try_acquire_lock(
-    lock_path: Path, timeout_seconds: int = 30
-) -> TextIO | None:
-    """
-    Try to acquire a file lock with timeout.
-
-    Args:
-        lock_path: Path to the lock file
-        timeout_seconds: Maximum time to wait for lock
-
-    Returns:
-        Lock file descriptor if successful, None if timeout
-    """
-    start_time = time.time()
-    while time.time() - start_time < timeout_seconds:
-        lock_file: TextIO | None = None
-        try:
-            lock_file = open(lock_path, 'w')
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return lock_file
-        except OSError:
-            # Another process holds the lock, wait a bit and try again
-            if lock_file is not None:
-                lock_file.close()
-            time.sleep(0.1)
-            continue
-    return None
+@contextmanager
+def _lifecycle_lock(manager: ConfigManager) -> Iterator[None]:
+    """Serialize lifecycle changes through the runtime's sole lock path."""
+    with open(manager.state_dir / 'runtime.lock', 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def _executable():
@@ -454,8 +435,7 @@ def up():
     key = Path(str(config.runpod_ssh_key))
     if not key.with_suffix(key.suffix + '.pub').is_file():
         raise RuntimeError(f'SSH public key not found: {key}.pub')
-    with open(manager.state_dir / 'runtime.lock', 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _lifecycle_lock(manager):
         _set_activation_status(manager, 'Checking the RunPod pod')
         client = RunPodClient(config.runpod_api_key)
         pod = _select_pod(manager, client, config.runpod_pod_name)
@@ -616,8 +596,7 @@ def down() -> None:
     manager = ConfigManager()
     config = manager.load_settings()
     errors = []
-    with open(manager.state_dir / 'runtime.lock', 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _lifecycle_lock(manager):
         try:
             result = _systemctl(
                 'stop', 'llm-coding-tunnel.service', check=False
@@ -693,32 +672,19 @@ def tunnel():
         if '=' in line
     )
     config = manager.load_settings()
-    known_hosts = manager.state_dir / 'known_hosts'
+    ssh = _ssh_base(config, values['SSH_HOST'], int(values['SSH_PORT']))
+    destination = ssh.pop()
     os.execvp(
         'ssh',
         [
-            'ssh',
+            *ssh,
             '-N',
-            '-T',
-            '-i',
-            values['SSH_KEY'],
-            '-p',
-            values['SSH_PORT'],
-            '-o',
-            'BatchMode=yes',
             '-o',
             'ExitOnForwardFailure=yes',
-            '-o',
-            'ServerAliveInterval=30',
-            '-o',
-            'ServerAliveCountMax=3',
-            '-o',
-            'StrictHostKeyChecking=accept-new',
-            '-o',
-            f'UserKnownHostsFile={known_hosts}',
             '-L',
-            f'127.0.0.1:{config.local_tunnel_port}:127.0.0.1:{str(config.remote_vllm_port)}',
-            f'root@{values["SSH_HOST"]}',
+            f'127.0.0.1:{config.local_tunnel_port}:'
+            f'127.0.0.1:{config.remote_vllm_port!s}',
+            destination,
         ],
     )
 
