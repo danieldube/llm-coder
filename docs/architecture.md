@@ -31,7 +31,7 @@ vLLM -> Qwen3-Coder
 - **systemd socket/proxy**: stable local endpoint and lazy activation.
 - **GHCR runtime image**: pinned vLLM/CUDA runtime and launcher, published by
   the release workflow.
-- **RunPod controller scripts**: idempotent pod create/start/stop/discovery.
+- **Python RunPod controller**: idempotent pod create/start/stop/discovery.
 - **SSH tunnel**: encrypted transport; vLLM is bound only to RunPod localhost.
 - **vLLM**: OpenAI-compatible model serving and native tool calling.
 - **RunPod persistent volume**: model cache and pinned vLLM virtual environment.
@@ -72,8 +72,10 @@ configuration, credentials, the reusable Pod identity, or remote storage.
 ## Security boundary
 
 OpenCode does not receive the RunPod API key or the dedicated RunPod SSH key as
-environment variables. Lifecycle scripts read them instead. This reduces accidental
-exposure but is not isolation: a host-native process still runs with the Unix user's filesystem authority. The vLLM port is never exposed publicly; only SSH is
+environment variables. The packaged `llm-runtime` lifecycle command reads them
+from mode-restricted configuration instead. This reduces accidental exposure
+but is not isolation: a host-native process still runs with the Unix user's
+filesystem authority. The vLLM port is never exposed publicly; only SSH is
 exposed by RunPod.
 
 OpenCode itself is not an OS sandbox. Its shell/file permission policy is a

@@ -4,6 +4,9 @@
 secrets.env
 .idea/*
 build/
+dist/
+*.egg-info/
+*.egg
 __pycache__/
 *.bak
 .Python
