@@ -45,7 +45,10 @@ vLLM -> Qwen3-Coder
    directory with RunPod. A name lookup is used only to adopt an existing Pod
    when no live persisted identity exists; ambiguous matches stop activation.
 5. The runtime creates or resumes the selected Pod, discovers its current SSH
-   address, starts prebuilt vLLM, and starts the SSH tunnel.
+   address, and binds that endpoint to the persisted Pod ID. It preserves the
+   host key while the endpoint is stable; a provider-confirmed address rotation
+   removes only the obsolete entry before enrolling the replacement. It then
+   starts prebuilt vLLM and the SSH tunnel.
 6. `systemd-socket-proxyd` forwards the already-open client connection to the
    tunnel.
 7. After the configured idle period, the proxy exits.

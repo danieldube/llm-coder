@@ -29,6 +29,30 @@ sandbox**.
 These controls reduce accidental exposure. They do not prevent an approved
 shell command from accessing anything the Unix user can access.
 
+## Dynamic SSH endpoints and host keys
+
+RunPod may assign a different public host or forwarded SSH port when a pod is
+restarted. An address is therefore not, by itself, the durable remote identity.
+The controller binds the last external SSH endpoint to the persisted provider
+pod ID in private state and keeps accepted keys in this installation's
+mode-0600 `known_hosts` file.
+
+On first use, a key may be enrolled only after the RunPod API reports the
+endpoint for the expected persisted pod. Later connections to the same address
+must present the enrolled key; a mismatch fails closed and the controller does
+not delete the key or retry. When API metadata reports a changed endpoint, the
+controller requires the response to carry the same pod ID, records an audit
+status message, removes only the obsolete address from `known_hosts`, and lets
+OpenSSH enroll the replacement on first contact. A different pod identity,
+malformed local state, or failure to remove the precise old entry aborts the
+rotation.
+
+This policy protects continuity at stable endpoints and prevents an endpoint
+change from silently authorizing a different RunPod pod. The initial key at a
+newly assigned endpoint still relies on the authenticated RunPod control-plane
+metadata plus the security of the first SSH connection; RunPod does not provide
+an independent host-key fingerprint through this integration.
+
 ## Shutdown and integration removal
 
 Idle shutdown and ordinary `llm-down` stop the SSH tunnel and selected RunPod

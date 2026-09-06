@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 from llm_coding.config import Settings
 from llm_coding.opencode import create_config, ensure_acp_registration
 from llm_coding.runpod import pod_create_body
-from llm_coding.ssh import command
+from llm_coding.ssh import command, is_host_key_mismatch, prepare_endpoint
 from llm_coding.state import FileStateStore
 from llm_coding.systemd import render_units
 
@@ -57,12 +57,78 @@ class FocusedModuleTests(unittest.TestCase):
     def test_ssh_uses_private_known_hosts_and_accept_new(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            runner = MagicMock(return_value=SimpleNamespace(returncode=0))
-            args = command(settings(root), root, 'host', 22022, runner)
+            args = command(settings(root), root, 'host', 22022)
             self.assertIn('StrictHostKeyChecking=accept-new', args)
             known_hosts = root / 'known_hosts'
             self.assertEqual(stat.S_IMODE(known_hosts.stat().st_mode), 0o600)
-            runner.assert_called_once()
+
+    def test_ssh_first_connection_records_pod_and_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = MagicMock()
+            audit = MagicMock()
+            prepare_endpoint(root, 'pod-1', 'host-a', 22022, runner, audit)
+            state = json.loads(
+                (root / 'runtime.ssh-endpoint.json').read_text()
+            )
+            self.assertEqual(
+                state, {'pod_id': 'pod-1', 'host': 'host-a', 'port': 22022}
+            )
+            self.assertEqual(
+                stat.S_IMODE((root / 'known_hosts').stat().st_mode), 0o600
+            )
+            runner.assert_not_called()
+            audit.assert_called_once()
+
+    def test_ssh_repeat_connection_preserves_host_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = MagicMock()
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            runner.reset_mock()
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            runner.assert_not_called()
+
+    def test_ssh_verified_endpoint_change_removes_only_old_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = MagicMock(return_value=SimpleNamespace(returncode=0))
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            audit = MagicMock()
+            prepare_endpoint(root, 'pod-1', 'host-b', 22022, runner, audit)
+            runner.assert_called_once_with(
+                [
+                    'ssh-keygen',
+                    '-R',
+                    '[host-a]:22',
+                    '-f',
+                    str(root / 'known_hosts'),
+                ],
+                check=False,
+                capture_output=True,
+            )
+            self.assertIn('Rotating SSH endpoint', audit.call_args.args[0])
+
+    def test_ssh_unchanged_endpoint_mismatch_fails_closed(self) -> None:
+        diagnostic = '@ WARNING @ REMOTE HOST IDENTIFICATION HAS CHANGED!'
+        self.assertTrue(is_host_key_mismatch(diagnostic))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = MagicMock()
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            runner.assert_not_called()
+
+    def test_ssh_different_pod_identity_fails_without_deletion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = MagicMock()
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            with self.assertRaisesRegex(RuntimeError, 'not expected pod pod-2'):
+                prepare_endpoint(
+                    root, 'pod-2', 'host-b', 22, runner, MagicMock()
+                )
+            runner.assert_not_called()
 
     def test_systemd_units_bind_public_endpoint_to_loopback(self) -> None:
         with (
