@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llm-coding"
 version = "0.1.0"
-description = "Python implementation of the llm-coding project"
-authors = [{name = "Anomaly"}]
+description = "Local coding-agent runtime backed by a RunPod-hosted vLLM service."
+authors = [{name = "Daniel Dube"}]
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
