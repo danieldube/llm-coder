@@ -28,6 +28,7 @@ from .opencode import (
 from .runpod import RunPodAPIError, RunPodClient, pod_create_body
 from .ssh import command as ssh_command
 from .ssh import exec_tunnel
+from .ssh import is_host_key_mismatch, prepare_endpoint
 from .state import (
     ACTIVATION_FAILURE_FILE,
     ACTIVATION_STATUS_FILE,
@@ -229,24 +230,46 @@ def up(
             deps.sleep(5)
         if not host or not port:
             raise RuntimeError('RunPod did not expose SSH before timeout')
-        ssh = ssh_command(config, manager.state_dir, host, port, deps.run)
+        prepare_endpoint(
+            manager.state_dir,
+            pod_id,
+            host,
+            port,
+            deps.run,
+            state.set_activation_status,
+        )
+        ssh = ssh_command(config, manager.state_dir, host, port)
         state.set_activation_status('Waiting for the RunPod SSH service')
         while deps.monotonic() < deadline:
-            if (
-                deps.run(
-                    [*ssh, 'true'], check=False, capture_output=True
-                ).returncode
-                == 0
-            ):
+            probe = deps.run(
+                [*ssh, 'true'], check=False, capture_output=True
+            )
+            if probe.returncode == 0:
                 break
+            if is_host_key_mismatch(probe.stderr):
+                raise RuntimeError(
+                    'SSH host key mismatch at unchanged endpoint '
+                    f'[{host}]:{port}; refusing automatic recovery'
+                )
             refreshed = client.get_pod(pod_id)
+            if str(refreshed.get('id')) != pod_id:
+                raise RuntimeError(
+                    'RunPod returned a different pod identity while '
+                    'verifying an SSH endpoint change'
+                )
             new_host = refreshed.get('publicIp')
             new_port = refreshed.get('portMappings', {}).get('22')
             if new_host and new_port and (new_host, new_port) != (host, port):
-                host, port = new_host, new_port
-                ssh = ssh_command(
-                    config, manager.state_dir, host, port, deps.run
+                prepare_endpoint(
+                    manager.state_dir,
+                    pod_id,
+                    new_host,
+                    new_port,
+                    deps.run,
+                    state.set_activation_status,
                 )
+                host, port = new_host, new_port
+                ssh = ssh_command(config, manager.state_dir, host, port)
             deps.sleep(5)
         else:
             raise RuntimeError('SSH did not become available before timeout')
@@ -363,7 +386,6 @@ def remove_integration() -> None:
 
 
 def tunnel(dependencies: RuntimeDependencies | None = None) -> None:
-    deps = dependencies or RuntimeDependencies()
     manager = ConfigManager()
     values = dict(
         line.split('=', 1)
@@ -377,7 +399,6 @@ def tunnel(dependencies: RuntimeDependencies | None = None) -> None:
         manager.state_dir,
         values['SSH_HOST'],
         int(values['SSH_PORT']),
-        deps.run,
     )
 
 
