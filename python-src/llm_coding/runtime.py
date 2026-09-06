@@ -13,15 +13,12 @@ from typing import Any
 
 import requests
 
+from .config import Settings
 from .core import ConfigManager, RunPodAPIError, RunPodClient
 
 _ACTIVATION_FAILURE_FILE = 'runtime.activation-error'
 _ACTIVATION_STATUS_FILE = 'runtime.activation-status'
 _POD_STATE_FILE = 'runtime.pod-id'
-
-
-def _value(config: dict, key: str, default: str = '') -> str:
-    return os.path.expandvars(os.path.expanduser(config.get(key, default)))
 
 
 def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -86,13 +83,9 @@ def _runtime_command() -> str:
     raise RuntimeError('llm-runtime is not installed; reinstall llm-coding')
 
 
-def _startup_timeout_seconds(config) -> int:
+def _startup_timeout_seconds(config: Settings) -> int:
     """Return the full socket activation budget used by llm-up."""
-    return (
-        int(config.get('RUNPOD_START_TIMEOUT_SECONDS', 1200))
-        + int(config.get('VLLM_START_TIMEOUT_SECONDS', 1800))
-        + 120
-    )
+    return config.startup_timeout_seconds
 
 
 def _user_units_dir() -> Path:
@@ -102,7 +95,7 @@ def _user_units_dir() -> Path:
     )
 
 
-def _render_systemd_units(config) -> dict[str, str]:
+def _render_systemd_units(config: Settings) -> dict[str, str]:
     runtime = _runtime_command()
     proxy = (
         shutil.which('systemd-socket-proxyd')
@@ -112,8 +105,8 @@ def _render_systemd_units(config) -> dict[str, str]:
         raise RuntimeError(
             'systemd-socket-proxyd is required but was not found'
         )
-    port = _value(config, 'LOCAL_PROXY_PORT', '18000')
-    idle = _value(config, 'IDLE_SHUTDOWN', '30min')
+    port = config.local_proxy_port
+    idle = config.idle_shutdown
     startup_timeout = _startup_timeout_seconds(config)
     return {
         'llm-coding.socket': (
@@ -123,7 +116,7 @@ def _render_systemd_units(config) -> dict[str, str]:
         'llm-coding-proxy.service': (
             f"""[Unit]\nDescription=On-demand RunPod LLM proxy\n"""
             f"""Requires=llm-coding.socket\nAfter=network-online.target llm-coding.socket\n\n[Service]\nType=notify\n"""
-            f"""ExecStartPre={runtime} up\nExecStart={proxy} --exit-idle-time={idle} 127.0.0.1:{_value(config, 'LOCAL_TUNNEL_PORT', '18001')}\n"""
+            f"""ExecStartPre={runtime} up\nExecStart={proxy} --exit-idle-time={idle} 127.0.0.1:{config.local_tunnel_port}\n"""
             f"""ExecStopPost={runtime} down\nTimeoutStartSec={startup_timeout}s\nTimeoutStopSec=3min\n"""
         ),
         'llm-coding-tunnel.service': (
@@ -149,7 +142,7 @@ def _asset_text(*parts: str) -> str:
         ) from exc
 
 
-def _ensure_acp_registration(config) -> None:
+def _ensure_acp_registration(config: Settings) -> None:
     """Register the OpenCode ACP server without affecting other agents."""
     acp_file = Path.home() / '.jetbrains' / 'acp.json'
     acp_file.parent.mkdir(parents=True, exist_ok=True)
@@ -169,13 +162,9 @@ def _ensure_acp_registration(config) -> None:
         raise RuntimeError(
             f'JetBrains ACP configuration at {acp_file} has invalid sections'
         )
-    defaults['use_idea_mcp'] = (
-        config.get('ENABLE_IDEA_MCP', 'true').lower() == 'true'
-    )
-    defaults['use_custom_mcp'] = (
-        config.get('ENABLE_CUSTOM_MCP', 'false').lower() == 'true'
-    )
-    servers[config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod')] = {
+    defaults['use_idea_mcp'] = config.enable_idea_mcp
+    defaults['use_custom_mcp'] = config.enable_custom_mcp
+    servers[config.jetbrains_agent_name] = {
         'command': str(Path(sys.argv[0]).resolve().parent / 'opencode-runpod'),
         'args': ['acp'],
     }
@@ -188,9 +177,9 @@ def _ensure_acp_registration(config) -> None:
         ) from exc
 
 
-def install_systemd(config=None) -> None:
+def install_systemd(config: Settings | None = None) -> None:
     """Install/update the user units required for lazy socket activation."""
-    config = config or ConfigManager().load_config()
+    config = config or ConfigManager().load_settings()
     user_units = _user_units_dir()
     user_units.mkdir(parents=True, exist_ok=True)
     units = _render_systemd_units(config)
@@ -204,6 +193,7 @@ def install_systemd(config=None) -> None:
 def install() -> None:
     """Provision the complete local integration from packaged assets."""
     manager = ConfigManager()
+    manager.ensure_directories()
     for destination, template in (
         (manager.config_file, 'config/config.env.example'),
         (manager.secrets_file, 'config/secrets.env.example'),
@@ -211,8 +201,8 @@ def install() -> None:
         if not destination.exists():
             destination.write_text(_asset_text(template))
             destination.chmod(0o600)
-    config = manager.load_config()
-    key = Path(_value(config, 'RUNPOD_SSH_KEY'))
+    config = manager.load_settings()
+    key = Path(str(config.runpod_ssh_key))
     if not key.exists():
         key.parent.mkdir(parents=True, exist_ok=True)
         _run(
@@ -230,9 +220,13 @@ def install() -> None:
             ]
         )
     opencode = Path.home() / '.opencode/bin/opencode'
-    if not opencode.exists() or _run(
-        [str(opencode), '--version'], check=False, capture_output=True
-    ).stdout.strip() != config.get('OPENCODE_VERSION'):
+    if (
+        not opencode.exists()
+        or _run(
+            [str(opencode), '--version'], check=False, capture_output=True
+        ).stdout.strip()
+        != config.opencode_version
+    ):
         installer = requests.get(
             'https://opencode.ai/install', timeout=60
         ).text
@@ -242,7 +236,7 @@ def install() -> None:
                 '-s',
                 '--',
                 '--version',
-                config['OPENCODE_VERSION'],
+                config.opencode_version,
                 '--no-modify-path',
             ],
             input=installer,
@@ -251,7 +245,7 @@ def install() -> None:
     install_systemd(config)
 
 
-def ensure_socket(config) -> None:
+def ensure_socket(config: Settings) -> None:
     user_units = _user_units_dir()
     expected_units = _render_systemd_units(config)
     if any(
@@ -267,7 +261,7 @@ def ensure_socket(config) -> None:
         install_systemd(config)
 
 
-def _ssh_base(config, host: str, port: int) -> list[str]:
+def _ssh_base(config: Settings, host: str, port: int) -> list[str]:
     state = ConfigManager().state_dir
     known_hosts = state / 'known_hosts'
     known_hosts.touch(mode=0o600, exist_ok=True)
@@ -280,7 +274,7 @@ def _ssh_base(config, host: str, port: int) -> list[str]:
         'ssh',
         '-T',
         '-i',
-        _value(config, 'RUNPOD_SSH_KEY'),
+        str(config.runpod_ssh_key),
         '-p',
         str(port),
         '-o',
@@ -299,7 +293,9 @@ def _ssh_base(config, host: str, port: int) -> list[str]:
     ]
 
 
-def _start_pod_or_raise(client, pod_id: str, config) -> None:
+def _start_pod_or_raise(
+    client: RunPodClient, pod_id: str, config: Settings
+) -> None:
     """Start a stopped pod and translate known provider failures into guidance."""
     try:
         client.start_pod(pod_id)
@@ -309,7 +305,7 @@ def _start_pod_or_raise(client, pod_id: str, config) -> None:
             storage_warning = (
                 'This pod uses a detachable network volume, so it can be recreated '
                 "without losing the volume's contents."
-                if config.get('RUNPOD_NETWORK_VOLUME_ID')
+                if config.runpod_network_volume_id
                 else 'This pod uses pod-local storage (RUNPOD_NETWORK_VOLUME_ID is empty); '
                 'deleting it can discard the cached model and files in /workspace.'
             )
@@ -322,35 +318,31 @@ def _start_pod_or_raise(client, pod_id: str, config) -> None:
         raise
 
 
-def _pod_create_body(
-    config: dict[str, str], public_key: str
-) -> dict[str, Any]:
+def _pod_create_body(config: Settings, public_key: str) -> dict[str, Any]:
     """Build the RunPod create request without exposing registry credentials."""
     body: dict[str, Any] = {
-        'name': config['RUNPOD_POD_NAME'],
-        'imageName': config['RUNPOD_IMAGE'],
-        'cloudType': config.get('RUNPOD_CLOUD_TYPE', 'SECURE'),
+        'name': config.runpod_pod_name,
+        'imageName': config.runpod_image,
+        'cloudType': config.runpod_cloud_type,
         'computeType': 'GPU',
-        'gpuTypeIds': [config['RUNPOD_GPU_TYPE']],
+        'gpuTypeIds': [config.runpod_gpu_type],
         'gpuTypePriority': 'availability',
         'gpuCount': 1,
         'interruptible': False,
         'supportPublicIp': True,
-        'containerDiskInGb': int(config.get('RUNPOD_CONTAINER_DISK_GB', 40)),
-        'volumeMountPath': config.get(
-            'RUNPOD_VOLUME_MOUNT_PATH', '/workspace'
-        ),
-        'minRAMPerGPU': int(config.get('RUNPOD_MIN_RAM_PER_GPU', 48)),
-        'minVCPUPerGPU': int(config.get('RUNPOD_MIN_VCPU_PER_GPU', 8)),
+        'containerDiskInGb': config.runpod_container_disk_gb,
+        'volumeMountPath': str(config.runpod_volume_mount_path),
+        'minRAMPerGPU': config.runpod_min_ram_per_gpu,
+        'minVCPUPerGPU': config.runpod_min_vcpu_per_gpu,
         'ports': ['22/tcp'],
         'env': {'SSH_PUBLIC_KEY': public_key},
     }
-    registry_auth_id = config.get('RUNPOD_CONTAINER_REGISTRY_AUTH_ID')
+    registry_auth_id = config.runpod_container_registry_auth_id
     if registry_auth_id:
         body['containerRegistryAuthId'] = registry_auth_id
-    volume = config.get('RUNPOD_NETWORK_VOLUME_ID')
+    volume = config.runpod_network_volume_id
     body['networkVolumeId' if volume else 'volumeInGb'] = volume or int(
-        config.get('RUNPOD_VOLUME_GB', 100)
+        config.runpod_volume_gb
     )
     return body
 
@@ -453,19 +445,17 @@ def _record_activation_failure(message):
 
 def up():
     manager = ConfigManager()
+    config = manager.load_settings()
     _clear_activation_failure(manager)
-    config = manager.load_config()
-    if not manager.validate_config(config):
-        raise RuntimeError('configuration validation failed')
     _ensure_acp_registration(config)
-    key = Path(_value(config, 'RUNPOD_SSH_KEY'))
+    key = Path(str(config.runpod_ssh_key))
     if not key.with_suffix(key.suffix + '.pub').is_file():
         raise RuntimeError(f'SSH public key not found: {key}.pub')
     with open(manager.state_dir / 'runtime.lock', 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         _set_activation_status(manager, 'Checking the RunPod pod')
-        client = RunPodClient(config['RUNPOD_API_KEY'])
-        pod = _select_pod(manager, client, config['RUNPOD_POD_NAME'])
+        client = RunPodClient(config.runpod_api_key)
+        pod = _select_pod(manager, client, config.runpod_pod_name)
         if pod is None:
             _set_activation_status(manager, 'Creating a RunPod pod')
             body = _pod_create_body(
@@ -486,9 +476,7 @@ def up():
                     manager, 'Starting the stopped RunPod pod'
                 )
                 _start_pod_or_raise(client, pod_id, config)
-        deadline = time.monotonic() + int(
-            config.get('RUNPOD_START_TIMEOUT_SECONDS', 1200)
-        )
+        deadline = time.monotonic() + int(config.runpod_start_timeout_seconds)
         host = port = None
         _set_activation_status(manager, 'Waiting for RunPod to expose SSH')
         while time.monotonic() < deadline:
@@ -537,16 +525,16 @@ def up():
                 'bash',
                 '-s',
                 '--',
-                config['VLLM_VERSION'],
-                config['VLLM_CUDA_VERSION'],
-                config['MODEL_ID'],
-                config.get('MODEL_REVISION', ''),
-                config['SERVED_MODEL_NAME'],
-                config.get('CONTEXT_SIZE', '65536'),
-                config.get('VLLM_GPU_MEMORY_UTILIZATION', '0.92'),
-                config.get('VLLM_TOOL_CALL_PARSER', 'qwen3_xml'),
-                config.get('REMOTE_VLLM_PORT', '8000'),
-                config.get('VLLM_START_TIMEOUT_SECONDS', '1800'),
+                config.vllm_version,
+                config.vllm_cuda_version,
+                config.model_id,
+                config.model_revision,
+                config.served_model_name,
+                str(config.context_size),
+                str(config.vllm_gpu_memory_utilization),
+                config.vllm_tool_call_parser,
+                str(config.remote_vllm_port),
+                str(config.vllm_start_timeout_seconds),
             ],
             input=script,
         )
@@ -555,7 +543,7 @@ def up():
         )
         _set_activation_status(manager, 'Starting the local SSH tunnel')
         _systemctl('restart', 'llm-coding-tunnel.service')
-        endpoint = f"http://127.0.0.1:{config.get('LOCAL_TUNNEL_PORT', '18001')}/v1/models"
+        endpoint = f'http://127.0.0.1:{config.local_tunnel_port}/v1/models'
         healthy_until = time.monotonic() + 60
         _set_activation_status(
             manager, 'Verifying vLLM through the SSH tunnel'
@@ -566,7 +554,7 @@ def up():
                     requests.get(endpoint, timeout=2).json().get('data', [])
                 )
                 if any(
-                    model.get('id') == config['SERVED_MODEL_NAME']
+                    model.get('id') == config.served_model_name
                     for model in models
                 ):
                     _set_activation_status(manager, 'Runtime ready')
@@ -598,12 +586,7 @@ def _remove_clion_opencode_config(config):
         raise RuntimeError(
             f'Cannot remove the CLion OpenCode entry: {acp_file} has an invalid agent_servers section'
         )
-    if (
-        servers.pop(
-            config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod'), None
-        )
-        is None
-    ):
+    if servers.pop(config.jetbrains_agent_name, None) is None:
         return
     temporary = acp_file.with_name(acp_file.name + '.llm-coding.tmp')
     try:
@@ -628,7 +611,7 @@ def down() -> None:
     this operation so socket activation can reuse the installation later.
     """
     manager = ConfigManager()
-    config = manager.load_config()
+    config = manager.load_settings()
     errors = []
     with open(manager.state_dir / 'runtime.lock', 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -643,8 +626,8 @@ def down() -> None:
         except OSError as exc:
             errors.append(f'could not stop the SSH tunnel ({exc})')
 
-        pod_name = config.get('RUNPOD_POD_NAME', '')
-        api_key = config.get('RUNPOD_API_KEY', '')
+        pod_name = config.runpod_pod_name
+        api_key = config.runpod_api_key
         if not pod_name or not api_key:
             errors.append(
                 'could not stop the RunPod pod (set RUNPOD_POD_NAME and RUNPOD_API_KEY, then run llm-down again)'
@@ -681,7 +664,7 @@ def down() -> None:
 def remove_integration() -> None:
     """Remove this installation's durable OpenCode and JetBrains integration."""
     manager = ConfigManager()
-    config = manager.load_config()
+    config = manager.load_settings()
     errors: list[str] = []
     try:
         (manager.state_dir / 'opencode.json').unlink(missing_ok=True)
@@ -706,7 +689,7 @@ def tunnel():
         .splitlines()
         if '=' in line
     )
-    config = manager.load_config()
+    config = manager.load_settings()
     known_hosts = manager.state_dir / 'known_hosts'
     os.execvp(
         'ssh',
@@ -731,8 +714,8 @@ def tunnel():
             '-o',
             f'UserKnownHostsFile={known_hosts}',
             '-L',
-            f"127.0.0.1:{config.get('LOCAL_TUNNEL_PORT', '18001')}:127.0.0.1:{config.get('REMOTE_VLLM_PORT', '8000')}",
-            f"root@{values['SSH_HOST']}",
+            f'127.0.0.1:{config.local_tunnel_port}:127.0.0.1:{str(config.remote_vllm_port)}',
+            f'root@{values["SSH_HOST"]}',
         ],
     )
 
@@ -746,11 +729,11 @@ def main():
         'remove-integration': remove_integration,
     }
     if len(sys.argv) == 2 and sys.argv[1] in {'-h', '--help'}:
-        print(f"Usage: {Path(sys.argv[0]).name} {{{', '.join(commands)}}}")
+        print(f'Usage: {Path(sys.argv[0]).name} {{{", ".join(commands)}}}')
         return
     if len(sys.argv) != 2 or sys.argv[1] not in commands:
         raise SystemExit(
-            f"Usage: {Path(sys.argv[0]).name} {{{', '.join(commands)}}}"
+            f'Usage: {Path(sys.argv[0]).name} {{{", ".join(commands)}}}'
         )
     try:
         commands[sys.argv[1]]()
