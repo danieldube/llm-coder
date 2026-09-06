@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import requests
 
@@ -43,7 +43,7 @@ def _command_error(result: subprocess.CompletedProcess) -> str:
 
 def _try_acquire_lock(
     lock_path: Path, timeout_seconds: int = 30
-) -> object | None:
+) -> TextIO | None:
     """
     Try to acquire a file lock with timeout.
 
@@ -56,12 +56,15 @@ def _try_acquire_lock(
     """
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
+        lock_file: TextIO | None = None
         try:
             lock_file = open(lock_path, 'w')
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return lock_file
         except OSError:
             # Another process holds the lock, wait a bit and try again
+            if lock_file is not None:
+                lock_file.close()
             time.sleep(0.1)
             continue
     return None

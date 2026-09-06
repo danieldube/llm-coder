@@ -39,26 +39,29 @@ python -m pip install -r requirements.txt
 # Alternatively: .venv/bin/python -m unittest discover -s python-src/tests
 ```
 
-Run the relevant tests from the Python source directory:
+Run the full required validation before handing off a change. These are the
+same independently visible checks run by CI:
 
 ```bash
-cd python-src
-python -m unittest discover -s tests
-```
-
-Run the full required validation before handing off a change:
-
-```bash
-pre-commit run --all-files
+.venv/bin/pre-commit run --all-files
+.venv/bin/python -m unittest discover -s python-src/tests
 bash tests/static-checks.sh
+.venv/bin/python -m build
+.venv/bin/python -m venv /tmp/llm-coding-wheel
+/tmp/llm-coding-wheel/bin/python -m pip install dist/*.whl
+for command in llm-up llm-down llm-status llm-doctor llm-install \
+  llm-runtime opencode-runpod; do
+  /tmp/llm-coding-wheel/bin/"$command" --help >/dev/null
+done
+docker build --tag llm-coding-runtime:local docker
 ```
 
-CI runs `pre-commit run --all-files`. Do not suppress lint, formatting, or type
-checking findings without a narrowly justified exception; fix the underlying
-code instead. If a dependency lacks type information, add its stub package to
-the mypy hook's `additional_dependencies` in `.pre-commit-config.yaml`. For
-example, resolve `Library stubs not installed for "requests"` by adding
-`types-requests` to that list, then rerun `pre-commit run --all-files`.
+The packaging commands require `build` in `.venv`. The final Docker command is
+required when `docker/**`, `.dockerignore`, or the Docker CI definition changes.
+Do not suppress lint, formatting, or type checking findings without a narrowly
+justified exception; fix the underlying code instead. If a dependency lacks
+type information, add its stub package to the mypy hook's
+`additional_dependencies` in `.pre-commit-config.yaml`.
 
 ## Implementation standards
 
