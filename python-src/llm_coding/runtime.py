@@ -586,7 +586,8 @@ def _remove_clion_opencode_config(config):
         acp = json.loads(acp_file.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(
-            f'Cannot remove the CLion OpenCode entry: repair {acp_file} and run llm-down again'
+            'Cannot remove the CLion OpenCode entry: repair '
+            f'{acp_file} and rerun integration removal'
         ) from exc
     if not isinstance(acp, dict):
         raise RuntimeError(
@@ -615,16 +616,16 @@ def _remove_clion_opencode_config(config):
         except OSError:
             pass
         raise RuntimeError(
-            f'Cannot update {acp_file}; check that it is writable and run llm-down again'
+            f'Cannot update {acp_file}; check that it is writable and rerun '
+            'integration removal'
         ) from exc
 
 
-def down():
-    """Stop remote/local runtime pieces and remove generated integrations.
+def down() -> None:
+    """Idempotently stop transient local and remote runtime resources.
 
-    Each cleanup step is attempted even when an earlier one fails, allowing a
-    failed RunPod request to be retried without leaving a usable-looking ACP
-    integration or stale tunnel state behind.
+    Durable configuration and the persisted Pod identity deliberately survive
+    this operation so socket activation can reuse the installation later.
     """
     manager = ConfigManager()
     config = manager.load_config()
@@ -661,21 +662,39 @@ def down():
             ) as exc:
                 errors.append(f'could not stop RunPod pod {pod_name} ({exc})')
 
+        # The SSH endpoint is assigned while a Pod is running and cannot be
+        # reused after it is stopped.  All other generated/configuration state
+        # is durable and belongs to remove_integration(), not idle shutdown.
         for generated_file in (
             manager.state_dir / 'runtime.env',
-            manager.state_dir / 'opencode.json',
+            manager.state_dir / _ACTIVATION_FAILURE_FILE,
+            manager.state_dir / _ACTIVATION_STATUS_FILE,
         ):
             try:
                 generated_file.unlink(missing_ok=True)
             except OSError as exc:
                 errors.append(f'could not remove {generated_file} ({exc})')
-        try:
-            _remove_clion_opencode_config(config)
-        except RuntimeError as exc:
-            errors.append(str(exc))
-
     if errors:
         raise RuntimeError('Shutdown incomplete: ' + '; '.join(errors))
+
+
+def remove_integration() -> None:
+    """Remove this installation's durable OpenCode and JetBrains integration."""
+    manager = ConfigManager()
+    config = manager.load_config()
+    errors: list[str] = []
+    try:
+        (manager.state_dir / 'opencode.json').unlink(missing_ok=True)
+    except OSError as exc:
+        errors.append(f'could not remove OpenCode configuration ({exc})')
+    try:
+        _remove_clion_opencode_config(config)
+    except RuntimeError as exc:
+        errors.append(str(exc))
+    if errors:
+        raise RuntimeError(
+            'Integration removal incomplete: ' + '; '.join(errors)
+        )
 
 
 def tunnel():
@@ -719,7 +738,13 @@ def tunnel():
 
 
 def main():
-    commands = {'up': up, 'down': down, 'tunnel': tunnel, 'install': install}
+    commands = {
+        'up': up,
+        'down': down,
+        'tunnel': tunnel,
+        'install': install,
+        'remove-integration': remove_integration,
+    }
     if len(sys.argv) == 2 and sys.argv[1] in {'-h', '--help'}:
         print(f"Usage: {Path(sys.argv[0]).name} {{{', '.join(commands)}}}")
         return

@@ -50,7 +50,17 @@ vLLM -> Qwen3-Coder
    tunnel.
 7. After the configured idle period, the proxy exits.
 8. `ExecStopPost` stops the tunnel and persisted RunPod, retaining both the
-   Pod identity and `/workspace` so the next activation reuses it.
+   Pod identity and `/workspace` so the next activation reuses it. This idle
+   stop also retains the generated OpenCode configuration, JetBrains ACP
+   registration, and installation configuration.
+
+`llm-down` is an explicit stop: it first disables the socket listener and
+stops the proxy, then performs the same transient shutdown used by
+`ExecStopPost`. It preserves all durable integration and Pod identity state.
+`llm-down --remove-integration` additionally prompts before deleting this
+installation's generated OpenCode configuration and its named JetBrains ACP
+entry. It does not delete unrelated ACP agents, local installation
+configuration, credentials, the reusable Pod identity, or remote storage.
 
 ## Security boundary
 

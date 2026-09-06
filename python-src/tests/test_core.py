@@ -464,7 +464,7 @@ class TestLlmUp(unittest.TestCase):
                 '_shutdown_summary_items',
                 return_value=(
                     ['socket listener', 'local proxy'],
-                    ['runtime.env', 'opencode.json'],
+                    ['runtime.env'],
                 ),
             ),
             patch.object(cli_module, 'run_command') as run_command,
@@ -472,7 +472,7 @@ class TestLlmUp(unittest.TestCase):
             patch('builtins.print') as print_mock,
         ):
             run_command.return_value.returncode = 0
-            cli_module.llm_down.callback()
+            cli_module.llm_down.callback(remove_integration=False)
 
         self.assertEqual(
             run_command.call_args_list[1].args[0],
@@ -485,19 +485,19 @@ class TestLlmUp(unittest.TestCase):
                 'Stopped: socket listener',
                 'Stopped: local proxy',
                 'Removed: runtime.env',
-                'Removed: opencode.json',
             ],
         )
 
 
 class TestRuntimeDown(unittest.TestCase):
-    def test_removes_generated_opencode_config_and_only_its_acp_entry(self):
+    def test_idle_down_retains_integration_and_pod_identity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             state_dir = root / 'state'
             state_dir.mkdir()
             (state_dir / 'runtime.env').write_text('SSH_HOST=example\n')
             (state_dir / 'opencode.json').write_text('{}\n')
+            (state_dir / 'runtime.pod-id').write_text('pod-1\n')
             home = root / 'home'
             acp_file = home / '.jetbrains' / 'acp.json'
             acp_file.parent.mkdir(parents=True)
@@ -520,6 +520,11 @@ class TestRuntimeDown(unittest.TestCase):
             }
             systemctl = MagicMock()
             systemctl.return_value.returncode = 0
+            client = MagicMock()
+            client.get_pod.return_value = {
+                'id': 'pod-1',
+                'desiredStatus': 'RUNNING',
+            }
             with (
                 patch.object(
                     runtime_module, 'ConfigManager', return_value=manager
@@ -527,15 +532,59 @@ class TestRuntimeDown(unittest.TestCase):
                 patch.object(runtime_module, '_systemctl', systemctl),
                 patch.object(runtime_module.Path, 'home', return_value=home),
                 patch.object(
-                    runtime_module.RunPodClient,
-                    'find_pod_by_name',
-                    return_value=None,
+                    runtime_module, 'RunPodClient', return_value=client
                 ),
             ):
                 runtime_module.down()
 
+            systemctl.assert_called_once_with(
+                'stop', 'llm-coding-tunnel.service', check=False
+            )
+            client.stop_pod.assert_called_once_with('pod-1')
             self.assertFalse((state_dir / 'runtime.env').exists())
+            self.assertTrue((state_dir / 'opencode.json').exists())
+            self.assertEqual(
+                (state_dir / 'runtime.pod-id').read_text(), 'pod-1\n'
+            )
+            servers = json.loads(acp_file.read_text())['agent_servers']
+            self.assertIn('OpenCode RunPod', servers)
+            self.assertIn('Keep Me', servers)
+
+    def test_remove_integration_deletes_only_project_registration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / 'state'
+            state_dir.mkdir()
+            (state_dir / 'opencode.json').write_text('{}\n')
+            (state_dir / 'runtime.pod-id').write_text('pod-1\n')
+            home = root / 'home'
+            acp_file = home / '.jetbrains' / 'acp.json'
+            acp_file.parent.mkdir(parents=True)
+            acp_file.write_text(
+                json.dumps(
+                    {
+                        'agent_servers': {
+                            'OpenCode RunPod': {'command': 'managed'},
+                            'Keep Me': {'command': 'unrelated'},
+                        }
+                    }
+                )
+            )
+            manager = MagicMock()
+            manager.state_dir = state_dir
+            manager.load_config.return_value = {
+                'JETBRAINS_AGENT_NAME': 'OpenCode RunPod'
+            }
+            with (
+                patch.object(
+                    runtime_module, 'ConfigManager', return_value=manager
+                ),
+                patch.object(runtime_module.Path, 'home', return_value=home),
+            ):
+                runtime_module.remove_integration()
+
             self.assertFalse((state_dir / 'opencode.json').exists())
+            self.assertTrue((state_dir / 'runtime.pod-id').exists())
             servers = json.loads(acp_file.read_text())['agent_servers']
             self.assertNotIn('OpenCode RunPod', servers)
             self.assertIn('Keep Me', servers)
@@ -574,7 +623,7 @@ class TestRuntimeDown(unittest.TestCase):
                 ):
                     runtime_module.down()
 
-            self.assertFalse((state_dir / 'opencode.json').exists())
+            self.assertTrue((state_dir / 'opencode.json').exists())
 
 
 if __name__ == '__main__':
