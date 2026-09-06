@@ -14,6 +14,8 @@ from typing import Any
 
 import requests
 
+from .config import Settings, parse_settings
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,45 +59,14 @@ class ConfigManager:
         self.config_file = self.config_dir / 'config.env'
         self.secrets_file = self.config_dir / 'secrets.env'
 
-        # Initialize directories
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.install_dir.mkdir(parents=True, exist_ok=True)
+    def ensure_directories(self) -> None:
+        """Create private application directories after validation."""
+        for directory in (self.config_dir, self.state_dir, self.install_dir):
+            directory.mkdir(parents=True, exist_ok=True)
 
-    def load_config(self) -> dict[str, str]:
-        """Load configuration from env files"""
-        config = {}
-
-        # Load config.env
-        if self.config_file.exists():
-            with open(self.config_file) as f:
-                for line in f:
-                    stripped_line = line.strip()
-                    if stripped_line and not stripped_line.startswith('#'):
-                        if '=' in stripped_line:
-                            key, value = stripped_line.split('=', 1)
-                            config[key.strip()] = value.strip().strip('"\'')
-
-        # Load secrets.env
-        if self.secrets_file.exists():
-            with open(self.secrets_file) as f:
-                for line in f:
-                    stripped_line = line.strip()
-                    if stripped_line and not stripped_line.startswith('#'):
-                        if '=' in stripped_line:
-                            key, value = stripped_line.split('=', 1)
-                            config[key.strip()] = value.strip().strip('"\'')
-
-        return config
-
-    def validate_config(self, config: dict[str, str]) -> bool:
-        """Validate configuration"""
-        required_keys = ['RUNPOD_API_KEY', 'RUNPOD_SSH_KEY', 'RUNPOD_POD_NAME']
-        for key in required_keys:
-            if key not in config or not config[key]:
-                logger.error('Missing required configuration: %s', key)
-                return False
-        return True
+    def load_settings(self) -> Settings:
+        """Load and validate the complete configuration without side effects."""
+        return parse_settings(self.config_file, self.secrets_file)
 
 
 class RunPodClient:
@@ -252,7 +223,7 @@ def write_shell_assignment(key: str, value: str) -> str:
     return f'{key}="{value}"\n'
 
 
-def create_opencode_config(config: dict[str, str], state_dir: Path) -> Path:
+def create_opencode_config(config: Settings, state_dir: Path) -> Path:
     """Render OpenCode configuration"""
     # Read base config
     base_config: dict[str, Any]
@@ -282,20 +253,18 @@ def create_opencode_config(config: dict[str, str], state_dir: Path) -> Path:
 
     # Modify base config with runtime values
     modified_config = base_config.copy()
-    modified_config['model'] = (
-        f"runpod/{config.get('SERVED_MODEL_NAME', 'PLACEHOLDER')}"
-    )
+    modified_config['model'] = f'runpod/{config.served_model_name}'
 
     # Update provider options
     modified_config['provider']['runpod']['options']['baseURL'] = (
-        f"http://127.0.0.1:{config.get('LOCAL_PROXY_PORT', '18000')}/v1"
+        f'http://127.0.0.1:{config.local_proxy_port}/v1'
     )
 
     # Create model configuration
-    model_name = config.get('SERVED_MODEL_NAME', 'PLACEHOLDER')
-    display_name = config.get('MODEL_DISPLAY_NAME', 'Unknown Model')
-    context_size = int(config.get('CONTEXT_SIZE', '65536'))
-    max_output_tokens = int(config.get('MAX_OUTPUT_TOKENS', '16384'))
+    model_name = config.served_model_name
+    display_name = config.model_display_name
+    context_size = config.context_size
+    max_output_tokens = config.max_output_tokens
 
     modified_config['provider']['runpod']['models'] = {
         model_name: {

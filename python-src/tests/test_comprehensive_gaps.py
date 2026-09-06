@@ -77,18 +77,95 @@ class TestResourceLeakDetection(unittest.TestCase):
 
 
 class TestConfigurationValidation(unittest.TestCase):
-    """Test configuration validation weaknesses"""
+    """Exercise the authoritative configuration schema."""
 
-    def test_semantic_validation(self):
-        """Test semantic validation of config values"""
-        # Test validation of numeric ranges, GPU types, etc.
-        # Current implementation only validates presence, not values
-        self.fail('Test for semantic config validation - needs implementation')
+    def setUp(self):
+        from llm_coding.config import parse_settings
 
-    def test_complex_environment_parsing(self):
-        """Test parsing of complex environment variables"""
-        # Test handling of quoted values, complex formatting
-        self.fail('Test for complex env parsing - needs implementation')
+        self.parse_settings = parse_settings
+        self.temporary = tempfile.TemporaryDirectory()
+        root = Path(self.temporary.name)
+        self.config_file = root / 'config.env'
+        self.secrets_file = root / 'secrets.env'
+        self.valid = {
+            'RUNPOD_API_KEY': 'real-test-token',
+            'RUNPOD_SSH_KEY': '$HOME/.ssh/runpod_test',
+            'RUNPOD_POD_NAME': 'test-pod',
+            'RUNPOD_IMAGE': 'example.invalid/runtime:sha-test',
+            'RUNPOD_GPU_TYPE': 'NVIDIA L40S',
+            'OPENCODE_VERSION': '1.2.3',
+            'VLLM_VERSION': '1.2.3',
+            'VLLM_CUDA_VERSION': '129',
+            'MODEL_ID': 'org/model',
+            'SERVED_MODEL_NAME': 'model',
+            'MODEL_DISPLAY_NAME': 'Test Model',
+        }
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def parse(self, changes=None):
+        values = dict(self.valid)
+        values.update(changes or {})
+        self.config_file.write_text(
+            ''.join(f'{key}={value}\n' for key, value in values.items())
+        )
+        self.secrets_file.write_text('')
+        return self.parse_settings(self.config_file, self.secrets_file, {})
+
+    def test_missing_and_placeholder_values_are_aggregated(self):
+        from llm_coding.config import ConfigurationError
+
+        with self.assertRaises(ConfigurationError) as raised:
+            self.parse({'RUNPOD_API_KEY': 'REPLACE_ME', 'MODEL_ID': ''})
+        message = str(raised.exception)
+        self.assertIn('MODEL_ID is required', message)
+        self.assertIn(
+            'RUNPOD_API_KEY contains a documented placeholder', message
+        )
+        self.assertNotIn('REPLACE_ME', message)
+
+    def test_malformed_values_are_table_driven(self):
+        from llm_coding.config import ConfigurationError
+
+        cases = {
+            'LOCAL_PROXY_PORT': 'zero',
+            'ENABLE_IDEA_MCP': 'yes',
+            'RUNPOD_CLOUD_TYPE': 'PRIVATE',
+            'VLLM_GPU_MEMORY_UTILIZATION': '1.01',
+            'IDLE_SHUTDOWN': 'forever',
+        }
+        for key, value in cases.items():
+            with self.subTest(key=key), self.assertRaises(ConfigurationError):
+                self.parse({key: value})
+
+    def test_boundaries_relationships_and_defaults(self):
+        settings = self.parse(
+            {
+                'LOCAL_PROXY_PORT': '1',
+                'LOCAL_TUNNEL_PORT': '65535',
+                'MAX_OUTPUT_TOKENS': '1',
+                'CONTEXT_SIZE': '1',
+            }
+        )
+        self.assertEqual(settings.local_proxy_port, 1)
+        self.assertEqual(settings.runpod_volume_gb, 100)
+        self.assertEqual(settings.startup_timeout_seconds, 3120)
+
+    def test_paths_expand_environment_and_home(self):
+        settings = self.parse()
+        self.assertEqual(
+            settings.runpod_ssh_key, Path.home() / '.ssh' / 'runpod_test'
+        )
+
+    def test_checked_in_example_is_valid_with_real_secret(self):
+        root = Path(__file__).parents[2]
+        settings = self.parse_settings(
+            root / 'config/config.env.example',
+            root / 'config/secrets.env.example',
+            {'RUNPOD_API_KEY': 'real-test-token'},
+        )
+        self.assertEqual(settings.local_proxy_port, 18000)
 
 
 class TestOperationalReliability(unittest.TestCase):

@@ -15,6 +15,7 @@ from pathlib import Path
 import click
 import requests
 
+from .config import Settings
 from .core import (
     ConfigManager,
     RunPodClient,
@@ -43,7 +44,7 @@ def run_command(
             result = subprocess.run(cmd, check=check)
         return result
     except subprocess.CalledProcessError as e:
-        logger.error(f"Command failed: {' '.join(cmd)}")
+        logger.error(f'Command failed: {" ".join(cmd)}')
         logger.error(f'Return code: {e.returncode}')
         if e.stdout:
             logger.error(f'STDOUT: {e.stdout}')
@@ -76,31 +77,29 @@ def release_lock() -> None:
         pass
 
 
-def create_pod_config(config: dict[str, str]) -> dict:
+def create_pod_config(config: Settings) -> dict[str, object]:
     """Create pod configuration for RunPod"""
     # This mirrors the logic from runtime-up.sh
     pod_config = {
-        'name': config.get('RUNPOD_POD_NAME'),
-        'imageName': config.get('RUNPOD_IMAGE'),
-        'cloudType': config.get('RUNPOD_CLOUD_TYPE', 'SECURE'),
+        'name': config.runpod_pod_name,
+        'imageName': config.runpod_image,
+        'cloudType': config.runpod_cloud_type,
         'computeType': 'GPU',
-        'gpuTypeIds': [config.get('RUNPOD_GPU_TYPE')],
+        'gpuTypeIds': [config.runpod_gpu_type],
         'gpuTypePriority': 'availability',
         'gpuCount': 1,
         'interruptible': False,
         'supportPublicIp': True,
-        'containerDiskInGb': int(config.get('RUNPOD_CONTAINER_DISK_GB', 40)),
-        'volumeMountPath': config.get(
-            'RUNPOD_VOLUME_MOUNT_PATH', '/workspace'
-        ),
-        'minRAMPerGPU': int(config.get('RUNPOD_MIN_RAM_PER_GPU', 48)),
-        'minVCPUPerGPU': int(config.get('RUNPOD_MIN_VCPU_PER_GPU', 8)),
+        'containerDiskInGb': config.runpod_container_disk_gb,
+        'volumeMountPath': str(config.runpod_volume_mount_path),
+        'minRAMPerGPU': config.runpod_min_ram_per_gpu,
+        'minVCPUPerGPU': config.runpod_min_vcpu_per_gpu,
         'ports': ['22/tcp'],
         'env': {},
     }
 
     # Add SSH public key if available
-    ssh_key_path = Path(config.get('RUNPOD_SSH_KEY', ''))
+    ssh_key_path = config.runpod_ssh_key
     if ssh_key_path.exists():
         pub_key_path = ssh_key_path.with_suffix('.pub')
         if pub_key_path.exists():
@@ -109,11 +108,11 @@ def create_pod_config(config: dict[str, str]) -> dict:
                 pod_config['env']['SSH_PUBLIC_KEY'] = pub_key
 
     # Handle volume configuration
-    network_volume = config.get('RUNPOD_NETWORK_VOLUME_ID', '')
+    network_volume = config.runpod_network_volume_id
     if network_volume:
         pod_config['networkVolumeId'] = network_volume
     else:
-        pod_config['volumeInGb'] = int(config.get('RUNPOD_VOLUME_GB', 100))
+        pod_config['volumeInGb'] = config.runpod_volume_gb
 
     return pod_config
 
@@ -147,23 +146,23 @@ def wait_for_ssh_connection(host: str, port: int, timeout: int = 120) -> bool:
 
 
 def ensure_vllm_on_remote(
-    host: str, port: int, ssh_key: str, config: dict[str, str]
+    host: str, port: int, ssh_key: str, config: Settings
 ) -> bool:
     """Ensure vLLM is running on remote host"""
     # This replicates the logic from runtime-up.sh that runs ensure-vllm.sh remotely
     try:
         # Prepare the vLLM configuration parameters
         params = [
-            config.get('VLLM_VERSION', ''),
-            config.get('VLLM_CUDA_VERSION', ''),
-            config.get('MODEL_ID', ''),
-            config.get('MODEL_REVISION', ''),
-            config.get('SERVED_MODEL_NAME', ''),
-            config.get('CONTEXT_SIZE', '65536'),
-            config.get('VLLM_GPU_MEMORY_UTILIZATION', '0.92'),
-            config.get('VLLM_TOOL_CALL_PARSER', 'qwen3_xml'),
-            config.get('REMOTE_VLLM_PORT', '8000'),
-            config.get('VLLM_START_TIMEOUT_SECONDS', '1800'),
+            config.vllm_version,
+            config.vllm_cuda_version,
+            config.model_id,
+            config.model_revision,
+            config.served_model_name,
+            str(config.context_size),
+            str(config.vllm_gpu_memory_utilization),
+            config.vllm_tool_call_parser,
+            str(config.remote_vllm_port),
+            str(config.vllm_start_timeout_seconds),
         ]
 
         script_content = _asset_text('remote/ensure-vllm.sh')
@@ -281,12 +280,12 @@ def runpod_api(
 
 
 def print_runtime_ready_summary(
-    config: dict[str, str], state_dir: Path, proxy_models: dict
+    config: Settings, state_dir: Path, proxy_models: dict
 ) -> None:
     """Print a concise, evidence-based summary after successful activation."""
-    model = config.get('SERVED_MODEL_NAME', 'unknown')
-    proxy_port = config.get('LOCAL_PROXY_PORT', '18000')
-    tunnel_port = config.get('LOCAL_TUNNEL_PORT', '18001')
+    model = config.served_model_name
+    proxy_port = config.local_proxy_port
+    tunnel_port = config.local_tunnel_port
 
     # The proxy response proves the public local endpoint. Probe the direct
     # tunnel too, so the summary does not merely report that a stale proxy was
@@ -331,13 +330,13 @@ def print_runtime_ready_summary(
 
     pod_summary = 'API status unavailable'
     try:
-        pod = RunPodClient(config['RUNPOD_API_KEY']).find_pod_by_name(
-            config['RUNPOD_POD_NAME']
+        pod = RunPodClient(config.runpod_api_key).find_pod_by_name(
+            config.runpod_pod_name
         )
         if pod:
-            pod_summary = f"{pod.get('name')} ({pod.get('desiredStatus', 'unknown')}, id {pod.get('id', 'unknown')})"
+            pod_summary = f'{pod.get("name")} ({pod.get("desiredStatus", "unknown")}, id {pod.get("id", "unknown")})'
         else:
-            pod_summary = f"{config['RUNPOD_POD_NAME']} (not returned by API)"
+            pod_summary = f'{config.runpod_pod_name} (not returned by API)'
     except Exception as exc:
         logger.warning(
             'Could not confirm RunPod pod status after activation: %s', exc
@@ -347,9 +346,7 @@ def print_runtime_ready_summary(
     acp_state = 'not registered'
     try:
         acp = json.loads((Path.home() / '.jetbrains' / 'acp.json').read_text())
-        if config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod') in acp.get(
-            'agent_servers', {}
-        ):
+        if config.jetbrains_agent_name in acp.get('agent_servers', {}):
             acp_state = 'registered'
     except (OSError, json.JSONDecodeError):
         pass
@@ -360,9 +357,7 @@ def print_runtime_ready_summary(
     print(f'  SSH tunnel:     127.0.0.1:{tunnel_port} (active)')
     print(f'  Local proxy:    http://127.0.0.1:{proxy_port}/v1 (active)')
     print(f'  OpenCode:       {opencode_config} (configured)')
-    print(
-        f"  CLion ACP:      {config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod')} ({acp_state})"
-    )
+    print(f'  CLion ACP:      {config.jetbrains_agent_name} ({acp_state})')
 
 
 def _shutdown_summary_items(include_integration: bool = False):
@@ -387,7 +382,7 @@ def _shutdown_summary_items(include_integration: bool = False):
 
     try:
         manager = ConfigManager()
-        config = manager.load_config()
+        config = manager.load_settings()
         for path, label in (
             (manager.state_dir / 'runtime.env', 'runtime.env'),
         ):
@@ -399,12 +394,12 @@ def _shutdown_summary_items(include_integration: bool = False):
             acp_file = Path.home() / '.jetbrains' / 'acp.json'
             if acp_file.exists():
                 acp = json.loads(acp_file.read_text())
-                agent = config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod')
+                agent = config.jetbrains_agent_name
                 if agent in acp.get('agent_servers', {}):
                     removed.append('CLion ACP entry')
-        if config.get('RUNPOD_API_KEY') and config.get('RUNPOD_POD_NAME'):
-            pod = RunPodClient(config['RUNPOD_API_KEY']).find_pod_by_name(
-                config['RUNPOD_POD_NAME']
+        if config.runpod_api_key and config.runpod_pod_name:
+            pod = RunPodClient(config.runpod_api_key).find_pod_by_name(
+                config.runpod_pod_name
             )
             if pod and pod.get('desiredStatus') == 'RUNNING':
                 stopped.append('RunPod pod')
@@ -441,7 +436,7 @@ def llm_up():
 
     # Load configuration
     config_manager = ConfigManager()
-    config = config_manager.load_config()
+    config = config_manager.load_settings()
 
     if (
         not config_manager.config_file.is_file()
@@ -450,8 +445,6 @@ def llm_up():
         fatal(f'Missing configuration files in {config_manager.config_dir}')
 
     # Validate configuration
-    if not config_manager.validate_config(config):
-        fatal('Configuration validation failed')
 
     try:
         ensure_socket(config)
@@ -476,7 +469,9 @@ def llm_up():
         # before opening the socket-activation request.
         initial_state, _ = get_systemd_service_info('llm-coding-proxy.service')
         if initial_state == 'active':
-            tunnel_endpoint = f"http://127.0.0.1:{config.get('LOCAL_TUNNEL_PORT', '18001')}/v1/models"
+            tunnel_endpoint = (
+                f'http://127.0.0.1:{config.local_tunnel_port}/v1/models'
+            )
             try:
                 tunnel_response = requests.get(tunnel_endpoint, timeout=2)
                 tunnel_response.raise_for_status()
@@ -521,7 +516,7 @@ def llm_up():
         # request running while monitoring that activation, as the shell
         # implementation does; waiting to issue it would never start the
         # service in the first place.
-        endpoint = f"http://127.0.0.1:{config.get('LOCAL_PROXY_PORT', '18000')}/v1/models"
+        endpoint = f'http://127.0.0.1:{config.local_proxy_port}/v1/models'
         request = subprocess.Popen(
             [
                 'curl',
@@ -658,7 +653,7 @@ def llm_down(remove_integration: bool = False) -> None:
                     result.stderr or result.stdout or 'unknown systemd error'
                 ).strip()
                 errors.append(
-                    f"could not stop {label} ({detail.splitlines()[-1] if detail else 'unknown systemd error'})"
+                    f'could not stop {label} ({detail.splitlines()[-1] if detail else "unknown systemd error"})'
                 )
         except OSError as exc:
             errors.append(f'could not stop {label} ({exc})')
@@ -715,9 +710,9 @@ def llm_status():
     # Check RunPod status
     try:
         config_manager = ConfigManager()
-        config = config_manager.load_config()
-        runpod_client = RunPodClient(config.get('RUNPOD_API_KEY'))
-        pod = find_pod_by_name(runpod_client, config.get('RUNPOD_POD_NAME'))
+        config = config_manager.load_settings()
+        runpod_client = RunPodClient(config.runpod_api_key)
+        pod = find_pod_by_name(runpod_client, config.runpod_pod_name)
 
         if pod:
             status = pod.get('desiredStatus', 'unknown')
@@ -725,20 +720,20 @@ def llm_status():
             gpu = pod.get('gpu', {}).get('displayName') or pod.get(
                 'gpu', {}
             ).get('id', 'unknown')
-            print(f"{'RunPod':<12} {status}")
-            print(f"{'Pod ID':<12} {pod_id}")
-            print(f"{'GPU':<12} {gpu}")
+            print(f'{"RunPod":<12} {status}')
+            print(f'{"Pod ID":<12} {pod_id}')
+            print(f'{"GPU":<12} {gpu}')
         else:
-            print(f"{'RunPod':<12} not created")
+            print(f'{"RunPod":<12} not created')
     except Exception as e:
         logger.error(f'Error checking RunPod status: {e}')
-        print(f"{'RunPod':<12} error")
+        print(f'{"RunPod":<12} error')
 
     # Check vLLM status
     try:
         config_manager = ConfigManager()
-        config = config_manager.load_config()
-        port = config.get('LOCAL_TUNNEL_PORT', '18001')
+        config = config_manager.load_settings()
+        port = config.local_tunnel_port
         endpoint = f'http://127.0.0.1:{port}/v1/models'
 
         # Use curl to probe the direct tunnel port
@@ -746,12 +741,12 @@ def llm_status():
         result = run_command(cmd, capture_output=True, check=False)
 
         if result.returncode == 0:
-            print(f"{'vLLM':<12} reachable")
+            print(f'{"vLLM":<12} reachable')
         else:
-            print(f"{'vLLM':<12} not reachable")
+            print(f'{"vLLM":<12} not reachable')
     except Exception as e:
         logger.error(f'Error checking vLLM status: {e}')
-        print(f"{'vLLM':<12} error")
+        print(f'{"vLLM":<12} error')
 
 
 @cli.command()
@@ -763,11 +758,9 @@ def llm_doctor(activate: bool):
 
     # Load configuration
     config_manager = ConfigManager()
-    config = config_manager.load_config()
+    config = config_manager.load_settings()
 
     # Validate configuration
-    if not config_manager.validate_config(config):
-        fatal('Configuration validation failed')
 
     # Perform checks...
     # 1. Check dependencies
@@ -783,23 +776,19 @@ def llm_doctor(activate: bool):
     logger.info('Basic checks passed')
 
     # Print basic configuration info
-    print(f"vLLM version:        {config.get('VLLM_VERSION', 'unknown')}")
-    print(
-        f"vLLM CUDA variant:   cu{config.get('VLLM_CUDA_VERSION', 'unknown')}"
-    )
-    print(f"RunPod image:        {config.get('RUNPOD_IMAGE', 'unknown')}")
+    print(f'vLLM version:        {config.vllm_version}')
+    print(f'vLLM CUDA variant:   cu{config.vllm_cuda_version}')
+    print(f'RunPod image:        {config.runpod_image}')
 
     # Check RunPod API key
-    api_key = config.get('RUNPOD_API_KEY', '')
+    api_key = config.runpod_api_key
     if not api_key or api_key == 'REPLACE_ME':
         fatal('RUNPOD_API_KEY is not configured')
     print('RunPod API key configured')
 
     # Check SSH keys
     ssh_key_path = Path(
-        os.path.expandvars(
-            os.path.expanduser(config.get('RUNPOD_SSH_KEY', ''))
-        )
+        os.path.expandvars(os.path.expanduser(str(config.runpod_ssh_key)))
     )
     if (
         not ssh_key_path.exists()
@@ -814,7 +803,7 @@ def llm_doctor(activate: bool):
     # use the OS permission check so this also rejects an executable directory.
     if not opencode_bin.is_file() or not os.access(opencode_bin, os.X_OK):
         fatal('OpenCode is not installed')
-    expected_version = config.get('OPENCODE_VERSION')
+    expected_version = config.opencode_version
     if expected_version:
         installed_version = run_command(
             [str(opencode_bin), '--version']
@@ -853,9 +842,7 @@ def llm_doctor(activate: bool):
         fatal('JetBrains ACP configuration not found')
     try:
         acp = json.loads(acp_file.read_text())
-        if config.get('JETBRAINS_AGENT_NAME') not in acp.get(
-            'agent_servers', {}
-        ):
+        if config.jetbrains_agent_name not in acp.get('agent_servers', {}):
             fatal('JetBrains ACP agent is not registered')
     except json.JSONDecodeError:
         fatal('JetBrains ACP configuration is invalid JSON')
@@ -871,15 +858,13 @@ def llm_doctor(activate: bool):
     try:
         llm_up.callback()
         print('RunPod/vLLM activation')
-        endpoint = (
-            f"http://127.0.0.1:{config.get('LOCAL_PROXY_PORT', '18000')}/v1"
-        )
+        endpoint = f'http://127.0.0.1:{config.local_proxy_port}/v1'
         models = (
             requests.get(endpoint + '/models', timeout=30)
             .json()
             .get('data', [])
         )
-        model = config.get('SERVED_MODEL_NAME', 'unknown')
+        model = config.served_model_name
         if not any(item.get('id') == model for item in models):
             fatal('Expected model is not served')
         print('Expected model ' + model)
@@ -950,7 +935,7 @@ def opencode_runpod(ctx):
 
     # Load configuration
     config_manager = ConfigManager()
-    config = config_manager.load_config()
+    config = config_manager.load_settings()
 
     # Create OpenCode config
     state_dir = config_manager.state_dir
@@ -966,20 +951,14 @@ def opencode_runpod(ctx):
 
     # Warm the model without blocking ACP/OpenCode startup.  The request is
     # deliberately best-effort, matching the old wrapper.
-    endpoint = (
-        f"http://127.0.0.1:{config.get('LOCAL_PROXY_PORT', '18000')}/v1/models"
-    )
+    endpoint = f'http://127.0.0.1:{config.local_proxy_port}/v1/models'
     subprocess.Popen(
         [
             'curl',
             '--fail',
             '--silent',
             '--max-time',
-            str(
-                int(config.get('RUNPOD_START_TIMEOUT_SECONDS', 1200))
-                + int(config.get('VLLM_START_TIMEOUT_SECONDS', 1800))
-                + 120
-            ),
+            str(config.startup_timeout_seconds),
             endpoint,
         ],
         stdout=subprocess.DEVNULL,
