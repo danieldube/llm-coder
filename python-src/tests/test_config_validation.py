@@ -58,6 +58,7 @@ class TestConfigValidation(unittest.TestCase):
             'RUNPOD_CLOUD_TYPE': 'PRIVATE',
             'VLLM_GPU_MEMORY_UTILIZATION': '1.01',
             'IDLE_SHUTDOWN': 'forever',
+            'LIFECYCLE_LOCK_TIMEOUT_SECONDS': '301',
         }
         for key, value in cases.items():
             with self.subTest(key=key), self.assertRaises(ConfigurationError):
@@ -74,6 +75,7 @@ class TestConfigValidation(unittest.TestCase):
         )
         self.assertEqual(settings.local_proxy_port, 1)
         self.assertEqual(settings.runpod_volume_gb, 100)
+        self.assertEqual(settings.lifecycle_lock_timeout_seconds, 30)
         self.assertEqual(settings.startup_timeout_seconds, 3120)
 
     def test_paths_expand_environment_and_home(self) -> None:

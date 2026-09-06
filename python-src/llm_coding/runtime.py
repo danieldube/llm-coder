@@ -1,11 +1,9 @@
 """Lifecycle orchestration for the on-demand RunPod endpoint."""
 
-import fcntl
 import importlib.resources
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -27,12 +25,12 @@ from .opencode import (
 )
 from .runpod import RunPodAPIError, RunPodClient, pod_create_body
 from .ssh import command as ssh_command
-from .ssh import exec_tunnel
-from .ssh import is_host_key_mismatch, prepare_endpoint
+from .ssh import exec_tunnel, is_host_key_mismatch, prepare_endpoint
 from .state import (
     ACTIVATION_FAILURE_FILE,
     ACTIVATION_STATUS_FILE,
     FileStateStore,
+    lifecycle_lock,
 )
 from .systemd import Systemd, run_command
 from .systemd import ensure_socket as systemd_ensure_socket
@@ -60,13 +58,6 @@ class RuntimeDependencies:
         return self.systemd or Systemd(self.run)
 
 
-@contextmanager
-def _lifecycle_lock(manager: ConfigManager) -> Iterator[None]:
-    with (manager.state_dir / 'runtime.lock').open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        yield
-
-
 def _asset_text(*parts: str) -> str:
     relative = '/'.join(parts)
     if len(parts) != 2:
@@ -85,6 +76,11 @@ def _startup_timeout_seconds(config: Settings) -> int:
     return config.startup_timeout_seconds
 
 
+def _lock_timeout_seconds(config: Settings) -> int:
+    """Allow lightweight compatibility settings used by external callers."""
+    return getattr(config, 'lifecycle_lock_timeout_seconds', 30)
+
+
 def install_systemd(config: Settings | None = None) -> None:
     systemd_install(config or ConfigManager().load_settings())
 
@@ -97,34 +93,37 @@ def install(dependencies: RuntimeDependencies | None = None) -> None:
     deps = dependencies or RuntimeDependencies()
     manager = ConfigManager()
     manager.ensure_directories()
-    for destination, template in (
-        (manager.config_file, 'config/config.env.example'),
-        (manager.secrets_file, 'config/secrets.env.example'),
+    with lifecycle_lock(
+        manager.state_dir, 'install', 30, deps.monotonic, deps.sleep
     ):
-        if not destination.exists():
-            destination.write_text(_asset_text(template))
-            destination.chmod(0o600)
-    config = manager.load_settings()
-    key = config.runpod_ssh_key
-    if not key.exists():
-        key.parent.mkdir(parents=True, exist_ok=True)
-        deps.run(
-            [
-                'ssh-keygen',
-                '-q',
-                '-t',
-                'ed25519',
-                '-f',
-                str(key),
-                '-N',
-                '',
-                '-C',
-                'runpod-llm-coding',
-            ]
-        )
-    ensure_installed(config, deps.run)
-    ensure_acp_registration(config)
-    systemd_install(config, deps.systemd_controller())
+        for destination, template in (
+            (manager.config_file, 'config/config.env.example'),
+            (manager.secrets_file, 'config/secrets.env.example'),
+        ):
+            if not destination.exists():
+                destination.write_text(_asset_text(template))
+                destination.chmod(0o600)
+        config = manager.load_settings()
+        key = config.runpod_ssh_key
+        if not key.exists():
+            key.parent.mkdir(parents=True, exist_ok=True)
+            deps.run(
+                [
+                    'ssh-keygen',
+                    '-q',
+                    '-t',
+                    'ed25519',
+                    '-f',
+                    str(key),
+                    '-N',
+                    '',
+                    '-C',
+                    'runpod-llm-coding',
+                ]
+            )
+        ensure_installed(config, deps.run)
+        ensure_acp_registration(config)
+        systemd_install(config, deps.systemd_controller())
 
 
 def _start_pod_or_raise(
@@ -156,7 +155,7 @@ def _select_pod(
     state: RuntimeState, client: PodProvider, name: str
 ) -> dict[str, Any] | None:
     if hasattr(state, 'state_dir'):
-        state = FileStateStore(state.state_dir)  # type: ignore[assignment, union-attr]
+        state = FileStateStore(Path(state.state_dir))
     persisted_id = state.read_pod_id()
     if persisted_id:
         try:
@@ -191,14 +190,21 @@ def up(
     manager = ConfigManager()
     config = manager.load_settings()
     state = FileStateStore(manager.state_dir)
-    state.clear_activation_failure()
-    ensure_acp_registration(config)
-    public_key = config.runpod_ssh_key.with_suffix(
-        config.runpod_ssh_key.suffix + '.pub'
-    )
-    if not public_key.is_file():
-        raise RuntimeError(f'SSH public key not found: {public_key}')
-    with _lifecycle_lock(manager):
+    with lifecycle_lock(
+        manager.state_dir,
+        'startup',
+        _lock_timeout_seconds(config),
+        deps.monotonic,
+        deps.sleep,
+        state.record_activation_failure,
+    ):
+        state.clear_activation_failure()
+        ensure_acp_registration(config)
+        public_key = config.runpod_ssh_key.with_suffix(
+            config.runpod_ssh_key.suffix + '.pub'
+        )
+        if not public_key.is_file():
+            raise RuntimeError(f'SSH public key not found: {public_key}')
         state.set_activation_status('Checking the RunPod pod')
         client = provider or RunPodClient(config.runpod_api_key)
         pod = _select_pod(state, client, config.runpod_pod_name)
@@ -241,9 +247,7 @@ def up(
         ssh = ssh_command(config, manager.state_dir, host, port)
         state.set_activation_status('Waiting for the RunPod SSH service')
         while deps.monotonic() < deadline:
-            probe = deps.run(
-                [*ssh, 'true'], check=False, capture_output=True
-            )
+            probe = deps.run([*ssh, 'true'], check=False, capture_output=True)
             if probe.returncode == 0:
                 break
             if is_host_key_mismatch(probe.stderr):
@@ -268,7 +272,7 @@ def up(
                     deps.run,
                     state.set_activation_status,
                 )
-                host, port = new_host, new_port
+                host, port = str(new_host), int(new_port)
                 ssh = ssh_command(config, manager.state_dir, host, port)
             deps.sleep(5)
         else:
@@ -329,7 +333,13 @@ def down(
     config = manager.load_settings()
     state = FileStateStore(manager.state_dir)
     errors: list[str] = []
-    with _lifecycle_lock(manager):
+    with lifecycle_lock(
+        manager.state_dir,
+        'shutdown',
+        _lock_timeout_seconds(config),
+        deps.monotonic,
+        deps.sleep,
+    ):
         try:
             result = deps.systemd_controller().run(
                 'stop', 'llm-coding-tunnel.service', check=False
@@ -367,18 +377,28 @@ def down(
         raise RuntimeError('Shutdown incomplete: ' + '; '.join(errors))
 
 
-def remove_integration() -> None:
+def remove_integration(
+    dependencies: RuntimeDependencies | None = None,
+) -> None:
+    deps = dependencies or RuntimeDependencies()
     manager = ConfigManager()
     config = manager.load_settings()
     errors: list[str] = []
-    try:
-        (manager.state_dir / 'opencode.json').unlink(missing_ok=True)
-    except OSError as exc:
-        errors.append(f'could not remove OpenCode configuration ({exc})')
-    try:
-        remove_acp_registration(config)
-    except RuntimeError as exc:
-        errors.append(str(exc))
+    with lifecycle_lock(
+        manager.state_dir,
+        'uninstall',
+        _lock_timeout_seconds(config),
+        deps.monotonic,
+        deps.sleep,
+    ):
+        try:
+            (manager.state_dir / 'opencode.json').unlink(missing_ok=True)
+        except OSError as exc:
+            errors.append(f'could not remove OpenCode configuration ({exc})')
+        try:
+            remove_acp_registration(config)
+        except RuntimeError as exc:
+            errors.append(str(exc))
     if errors:
         raise RuntimeError(
             'Integration removal incomplete: ' + '; '.join(errors)
@@ -403,7 +423,7 @@ def tunnel(dependencies: RuntimeDependencies | None = None) -> None:
 
 
 def main() -> None:
-    commands = {
+    commands: dict[str, Callable[[], None]] = {
         'up': up,
         'down': down,
         'tunnel': tunnel,
@@ -420,10 +440,6 @@ def main() -> None:
     try:
         commands[sys.argv[1]]()
     except (OSError, RuntimeError, requests.RequestException) as exc:
-        if sys.argv[1] == 'up':
-            FileStateStore(
-                ConfigManager().state_dir
-            ).record_activation_failure(str(exc))
         raise SystemExit(f'{Path(sys.argv[0]).name}: {exc}') from None
 
 

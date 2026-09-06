@@ -51,6 +51,7 @@ class Settings:
     idle_shutdown: str = '30min'
     runpod_start_timeout_seconds: int = 1200
     vllm_start_timeout_seconds: int = 1800
+    lifecycle_lock_timeout_seconds: int = 30
     jetbrains_agent_name: str = 'OpenCode RunPod'
     enable_idea_mcp: bool = True
     enable_custom_mcp: bool = False
@@ -118,7 +119,7 @@ def parse_settings(
     raw = _read_env(config_file, errors)
     raw.update(_read_env(secrets_file, errors))
     source = os.environ if environ is None else environ
-    known = set(Settings.__dataclass_fields__)  # type: ignore[attr-defined]
+    known = set(Settings.__dataclass_fields__)
     env_names = {name.upper() for name in known}
     raw.update(
         {key: value for key, value in source.items() if key in env_names}
@@ -176,6 +177,7 @@ def parse_settings(
     remote = integer('REMOTE_VLLM_PORT', 8000, 1, 65535)
     runpod_timeout = integer('RUNPOD_START_TIMEOUT_SECONDS', 1200, 1, 86400)
     vllm_timeout = integer('VLLM_START_TIMEOUT_SECONDS', 1800, 1, 86400)
+    lock_timeout = integer('LIFECYCLE_LOCK_TIMEOUT_SECONDS', 30, 1, 300)
     if output > context:
         errors.append('MAX_OUTPUT_TOKENS must not exceed CONTEXT_SIZE')
     if proxy == tunnel:
@@ -221,6 +223,7 @@ def parse_settings(
         idle_shutdown=idle,
         runpod_start_timeout_seconds=runpod_timeout,
         vllm_start_timeout_seconds=vllm_timeout,
+        lifecycle_lock_timeout_seconds=lock_timeout,
         jetbrains_agent_name=text('JETBRAINS_AGENT_NAME', 'OpenCode RunPod'),
         enable_idea_mcp=boolean('ENABLE_IDEA_MCP', True),
         enable_custom_mcp=boolean('ENABLE_CUSTOM_MCP', False),

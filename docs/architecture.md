@@ -44,6 +44,10 @@ vLLM -> Qwen3-Coder
 4. The runtime reconciles the mode-0600 Pod ID stored in the user state
    directory with RunPod. A name lookup is used only to adopt an existing Pod
    when no live persisted identity exists; ambiguous matches stop activation.
+   Startup, shutdown, installation, and integration removal share a
+   nonblocking lifecycle lock. Contending commands retry for the configured
+   bounded interval and report which lifecycle operation is in progress;
+   shutdown never edits endpoint state or stops a Pod unless it holds the lock.
 5. The runtime creates or resumes the selected Pod, discovers its current SSH
    address, and binds that endpoint to the persisted Pod ID. It preserves the
    host key while the endpoint is stable; a provider-confirmed address rotation
