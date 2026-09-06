@@ -3,7 +3,6 @@
 CLI commands for llm-coding
 """
 
-import fcntl
 import json
 import logging
 import os
@@ -23,7 +22,7 @@ from .core import (
     create_opencode_config,
     fatal,
 )
-from .runtime import _asset_text, _startup_timeout_seconds, ensure_socket
+from .runtime import _startup_timeout_seconds, ensure_socket
 from .runtime import down as runtime_down
 from .runtime import install as runtime_install
 from .runtime import remove_integration as runtime_remove_integration
@@ -53,153 +52,6 @@ def run_command(
         if check:
             raise
         return e
-
-
-def acquire_lock(lock_file: Path) -> None:
-    """Acquire file lock"""
-    try:
-        fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
-        # Try to lock the file
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Keep the file descriptor open to maintain the lock
-        acquire_lock.fd = fd
-    except (OSError, AttributeError):
-        fatal(f'Could not acquire lock on {lock_file}')
-
-
-def release_lock() -> None:
-    """Release file lock"""
-    try:
-        if hasattr(acquire_lock, 'fd'):
-            fcntl.flock(acquire_lock.fd, fcntl.LOCK_UN)
-            os.close(acquire_lock.fd)
-    except Exception:
-        pass
-
-
-def create_pod_config(config: Settings) -> dict[str, object]:
-    """Create pod configuration for RunPod"""
-    # This mirrors the logic from runtime-up.sh
-    pod_config = {
-        'name': config.runpod_pod_name,
-        'imageName': config.runpod_image,
-        'cloudType': config.runpod_cloud_type,
-        'computeType': 'GPU',
-        'gpuTypeIds': [config.runpod_gpu_type],
-        'gpuTypePriority': 'availability',
-        'gpuCount': 1,
-        'interruptible': False,
-        'supportPublicIp': True,
-        'containerDiskInGb': config.runpod_container_disk_gb,
-        'volumeMountPath': str(config.runpod_volume_mount_path),
-        'minRAMPerGPU': config.runpod_min_ram_per_gpu,
-        'minVCPUPerGPU': config.runpod_min_vcpu_per_gpu,
-        'ports': ['22/tcp'],
-        'env': {},
-    }
-
-    # Add SSH public key if available
-    ssh_key_path = config.runpod_ssh_key
-    if ssh_key_path.exists():
-        pub_key_path = ssh_key_path.with_suffix('.pub')
-        if pub_key_path.exists():
-            with open(pub_key_path) as f:
-                pub_key = f.read().strip()
-                pod_config['env']['SSH_PUBLIC_KEY'] = pub_key
-
-    # Handle volume configuration
-    network_volume = config.runpod_network_volume_id
-    if network_volume:
-        pod_config['networkVolumeId'] = network_volume
-    else:
-        pod_config['volumeInGb'] = config.runpod_volume_gb
-
-    return pod_config
-
-
-def wait_for_ssh_connection(host: str, port: int, timeout: int = 120) -> bool:
-    """Wait for SSH connection to be available"""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            # Try to establish SSH connection
-            cmd = [
-                'ssh',
-                '-o',
-                'ConnectTimeout=5',
-                '-o',
-                'BatchMode=yes',
-                '-o',
-                'StrictHostKeyChecking=no',
-                f'-p{port}',
-                f'root@{host}',
-                'true',
-            ]
-            result = run_command(cmd, capture_output=True, check=False)
-            if result.returncode == 0:
-                return True
-        except Exception:
-            # Log the specific exception for debugging but continue the loop
-            logger.debug('SSH connection check failed', exc_info=True)
-        time.sleep(2)
-    return False
-
-
-def ensure_vllm_on_remote(
-    host: str, port: int, ssh_key: str, config: Settings
-) -> bool:
-    """Ensure vLLM is running on remote host"""
-    # This replicates the logic from runtime-up.sh that runs ensure-vllm.sh remotely
-    try:
-        # Prepare the vLLM configuration parameters
-        params = [
-            config.vllm_version,
-            config.vllm_cuda_version,
-            config.model_id,
-            config.model_revision,
-            config.served_model_name,
-            str(config.context_size),
-            str(config.vllm_gpu_memory_utilization),
-            config.vllm_tool_call_parser,
-            str(config.remote_vllm_port),
-            str(config.vllm_start_timeout_seconds),
-        ]
-
-        script_content = _asset_text('remote/ensure-vllm.sh')
-
-        # Create SSH command to run ensure-vllm.sh remotely
-        cmd = [
-            'ssh',
-            '-i',
-            ssh_key,
-            '-p',
-            str(port),
-            '-o',
-            'BatchMode=yes',
-            '-o',
-            'StrictHostKeyChecking=accept-new',
-            f'root@{host}',
-            'bash -s --',
-        ] + params
-
-        # Execute the script remotely
-        logger.info(f'Running vLLM setup on remote host {host}')
-        result = subprocess.run(
-            cmd,
-            input=script_content,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            logger.error(f'Remote vLLM setup failed: {result.stderr}')
-            return False
-        logger.info('Remote vLLM setup completed successfully')
-        return True
-
-    except Exception as e:
-        logger.error(f'Failed to ensure vLLM on remote: {e}')
-        return False
 
 
 def get_systemd_service_info(service_name: str) -> tuple:
@@ -252,31 +104,6 @@ def read_activation_status(state_dir: Path) -> str:
         return (state_dir / 'runtime.activation-status').read_text().strip()
     except OSError:
         return ''
-
-
-def find_pod_by_name(
-    runpod_client: RunPodClient, pod_name: str
-) -> dict | None:
-    """Find a pod by name"""
-    try:
-        pods = runpod_client.get_pods()
-        for pod in pods:
-            if pod.get('name') == pod_name:
-                return pod
-        return None
-    except Exception as e:
-        logger.error(f'Error finding pod: {e}')
-        return None
-
-
-def runpod_api(
-    runpod_client: RunPodClient,
-    method: str,
-    path: str,
-    body: str | None = None,
-) -> str:
-    """Make a RunPod API call"""
-    return runpod_client.api_call(method, path, body)
 
 
 def print_runtime_ready_summary(
@@ -712,7 +539,7 @@ def llm_status():
         config_manager = ConfigManager()
         config = config_manager.load_settings()
         runpod_client = RunPodClient(config.runpod_api_key)
-        pod = find_pod_by_name(runpod_client, config.runpod_pod_name)
+        pod = runpod_client.find_pod_by_name(config.runpod_pod_name)
 
         if pod:
             status = pod.get('desiredStatus', 'unknown')
