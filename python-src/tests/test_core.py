@@ -7,12 +7,16 @@ import json
 import stat
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from llm_coding import runtime
 from llm_coding.config import Settings
-from llm_coding.opencode import create_config, ensure_acp_registration
+from llm_coding.core import RunPodAPIError
+from llm_coding.opencode import create_config, ensure_acp_registration, launch
 from llm_coding.runpod import pod_create_body
 from llm_coding.ssh import command, is_host_key_mismatch, prepare_endpoint
 from llm_coding.state import FileStateStore
@@ -36,6 +40,88 @@ def settings(root: Path) -> Settings:
 
 
 class FocusedModuleTests(unittest.TestCase):
+    def test_opencode_reports_failed_background_prewarm(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            binary = home / '.opencode/bin/opencode'
+            binary.parent.mkdir(parents=True)
+            binary.touch()
+            prewarm = MagicMock(returncode=1)
+            prewarm.communicate.return_value = ('', 'capacity diagnostic\n')
+            thread = MagicMock()
+
+            def run_reporter() -> None:
+                reporter = thread.call_args.kwargs['target']
+                reporter()
+
+            thread.return_value.start.side_effect = run_reporter
+            stderr = StringIO()
+            with (
+                patch('llm_coding.opencode.Path.home', return_value=home),
+                patch(
+                    'llm_coding.opencode.subprocess.Popen',
+                    return_value=prewarm,
+                ),
+                patch('llm_coding.opencode.subprocess.run') as run,
+                patch('llm_coding.opencode.threading.Thread', thread),
+                redirect_stderr(stderr),
+            ):
+                launch(settings(home), home, ['--help'])
+
+        self.assertEqual(stderr.getvalue(), 'capacity diagnostic\n')
+        run.assert_called_once_with([str(binary), '--help'], check=True)
+
+    def test_packaged_remote_launcher_is_read_with_package_and_name(
+        self,
+    ) -> None:
+        self.assertIn(
+            'Starting prebuilt vLLM',
+            runtime._asset_text('remote', 'ensure-vllm.sh'),
+        )
+
+    def test_create_pod_explains_only_known_capacity_failures(self) -> None:
+        client = MagicMock()
+        client.create_pod.side_effect = RunPodAPIError(
+            'HTTP 500: create pod: There are no instances currently available',
+            500,
+        )
+        try:
+            runtime._create_pod_or_raise(
+                client, settings(Path('/tmp')), 'ssh-ed25519 public'
+            )
+        except RuntimeError as exc:
+            self.assertIn('RUNPOD_GPU_TYPE', str(exc))
+            self.assertIn('RUNPOD_CLOUD_TYPE', str(exc))
+        else:
+            self.fail('Expected capacity failure')
+
+        client.create_pod.side_effect = RunPodAPIError(
+            'HTTP 500: internal', 500
+        )
+        try:
+            runtime._create_pod_or_raise(
+                client, settings(Path('/tmp')), 'ssh-ed25519 public'
+            )
+        except RunPodAPIError as exc:
+            self.assertIn('internal', str(exc))
+        else:
+            self.fail('Expected provider error')
+
+    def test_resume_pod_explains_capacity_without_renaming_pod(self) -> None:
+        client = MagicMock()
+        client.start_pod.side_effect = RuntimeError(
+            'not enough free gpus on the host machine'
+        )
+        try:
+            runtime._start_pod_or_raise(
+                client, 'pod-1', settings(Path('/tmp'))
+            )
+        except RuntimeError as exc:
+            self.assertIn('Retry llm-up later', str(exc))
+            self.assertIn('deliberately replace the persisted pod', str(exc))
+        else:
+            self.fail('Expected resume capacity failure')
+
     def test_create_request_keeps_registry_secret_out_of_environment(
         self,
     ) -> None:
@@ -124,10 +210,14 @@ class FocusedModuleTests(unittest.TestCase):
             root = Path(temporary)
             runner = MagicMock()
             prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
-            with self.assertRaisesRegex(RuntimeError, 'not expected pod pod-2'):
+            try:
                 prepare_endpoint(
                     root, 'pod-2', 'host-b', 22, runner, MagicMock()
                 )
+            except RuntimeError as exc:
+                self.assertIn('not expected pod pod-2', str(exc))
+            else:
+                self.fail('Expected different pod identity to fail')
             runner.assert_not_called()
 
     def test_systemd_units_bind_public_endpoint_to_loopback(self) -> None:

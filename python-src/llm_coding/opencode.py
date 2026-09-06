@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -365,16 +366,19 @@ def launch(config: Settings, state_dir: Path, args: list[str]) -> None:
     binary = Path.home() / '.opencode/bin/opencode'
     if not binary.exists():
         raise RuntimeError(f'OpenCode not found at {binary}')
-    subprocess.Popen(
+    prewarm = subprocess.Popen(
         [
-            'curl',
-            '--fail',
-            '--silent',
-            '--max-time',
-            str(config.startup_timeout_seconds),
-            f'http://127.0.0.1:{_value(config, "local_proxy_port")}/v1/models',
+            str(Path(sys.executable).with_name('llm-up')),
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
+
+    def report_prewarm_failure() -> None:
+        _, stderr = prewarm.communicate()
+        if prewarm.returncode and stderr:
+            print(stderr, file=sys.stderr, end='')
+
+    threading.Thread(target=report_prewarm_failure, daemon=True).start()
     subprocess.run([str(binary), *args], check=True)

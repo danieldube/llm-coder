@@ -4,7 +4,10 @@
 # ruff: noqa: PT009
 
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock
@@ -12,10 +15,29 @@ from unittest.mock import MagicMock
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from llm_coding.cli import print_activation_failure
 from llm_coding.systemd import UnitState, inspect_unit
 
 
 class TestSystemdStatus(unittest.TestCase):
+    def test_activation_failure_ignores_diagnostics_from_before_attempt(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'runtime.activation-error'
+            path.write_text('old failure\n')
+            mtime_ns = path.stat().st_mtime_ns
+            self.assertFalse(
+                print_activation_failure(Path(temporary), mtime_ns)
+            )
+
+            output = StringIO()
+            with redirect_stderr(output):
+                self.assertTrue(
+                    print_activation_failure(Path(temporary), mtime_ns - 1)
+                )
+            self.assertIn('old failure', output.getvalue())
+
     def test_documented_states_are_read_from_show_properties(self) -> None:
         for value in ('active', 'activating', 'inactive', 'failed'):
             with self.subTest(value=value):

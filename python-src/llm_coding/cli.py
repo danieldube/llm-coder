@@ -62,10 +62,23 @@ def get_systemd_service_info(service_name: str) -> tuple[str, str]:
     return status.state.value, status.invocation_id
 
 
-def print_activation_failure(state_dir: Path) -> bool:
-    """Print the specific error recorded by the systemd pre-start command."""
+def activation_failure_mtime_ns(state_dir: Path) -> int:
+    """Return the modification time of the saved activation failure."""
     try:
-        message = (state_dir / 'runtime.activation-error').read_text().strip()
+        return (state_dir / 'runtime.activation-error').stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def print_activation_failure(
+    state_dir: Path, newer_than_ns: int = 0
+) -> bool:
+    """Print the specific error recorded by the systemd pre-start command."""
+    path = state_dir / 'runtime.activation-error'
+    try:
+        if path.stat().st_mtime_ns <= newer_than_ns:
+            return False
+        message = path.read_text().strip()
     except OSError:
         return False
     if not message:
@@ -318,6 +331,9 @@ def llm_up():
         proxy_invocation = ''
         activation_observed = False
         last_activation_status = ''
+        failure_started_at = activation_failure_mtime_ns(
+            config_manager.state_dir
+        )
 
         # Connecting to the socket activates the proxy service.  Keep this
         # request running while monitoring that activation, as the shell
@@ -350,6 +366,15 @@ def llm_up():
                 print(f'  {activation_status}...', file=sys.stderr)
                 last_activation_status = activation_status
 
+            if print_activation_failure(
+                config_manager.state_dir, failure_started_at
+            ):
+                request.terminate()
+                _, request_error = request.communicate()
+                if request_error:
+                    print(request_error, file=sys.stderr, end='')
+                sys.exit(1)
+
             # Get current service state
             active_state, current_invocation = get_systemd_service_info(
                 'llm-coding-proxy.service'
@@ -379,7 +404,9 @@ def llm_up():
                 print('', file=sys.stderr)
                 if request_error:
                     print(request_error, file=sys.stderr, end='')
-                if not print_activation_failure(config_manager.state_dir):
+                if not print_activation_failure(
+                    config_manager.state_dir, failure_started_at
+                ):
                     print(
                         'LLM runtime activation failed. See: journalctl --user --unit llm-coding-proxy.service --lines 30 --no-pager',
                         file=sys.stderr,
@@ -393,7 +420,9 @@ def llm_up():
         if request.returncode != 0:
             if request_error:
                 print(request_error, file=sys.stderr, end='')
-            if not print_activation_failure(config_manager.state_dir):
+            if not print_activation_failure(
+                config_manager.state_dir, failure_started_at
+            ):
                 print(
                     'LLM runtime activation failed. See: journalctl --user --unit llm-coding-proxy.service --lines 30 --no-pager',
                     file=sys.stderr,

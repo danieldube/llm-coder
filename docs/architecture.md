@@ -110,6 +110,15 @@ Runtime orchestration accepts explicit command, monotonic-clock, sleep, systemd,
 and provider dependencies. Tests can therefore supply deterministic fakes
 without replacing module globals or contacting RunPod, SSH, or systemd.
 
+## Activation diagnostics
+
+The lifecycle command writes a non-sensitive activation failure to private
+state before systemd marks the proxy failed. `llm-up` reads that diagnostic and
+reports it with the current activation stage. Known RunPod capacity failures are
+translated into retry and availability guidance; other provider errors retain
+their provider detail. OpenCode's background prewarm surfaces failed `llm-up`
+output on standard error without delaying OpenCode startup.
+
 ## Status contract
 
 `llm-status` reads `LoadState`, `ActiveState`, and `SubState` from user systemd

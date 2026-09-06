@@ -132,7 +132,7 @@ def _start_pod_or_raise(
     try:
         client.start_pod(pod_id)
     except RuntimeError as exc:
-        if 'not enough free gpus on the host machine' not in str(exc).lower():
+        if not _is_capacity_error(exc):
             raise
         storage = (
             'This pod uses a detachable network volume, so it can be recreated without losing the volume contents.'  # noqa: E501
@@ -145,9 +145,36 @@ def _start_pod_or_raise(
         )
         raise RuntimeError(
             f'RunPod cannot resume pod {pod_id}: its assigned host has no free GPU. '  # noqa: E501
-            'Wait a few minutes and run llm-up again. If capacity does not return, '  # noqa: E501
-            'create a replacement pod with a new RUNPOD_POD_NAME on an available GPU. '  # noqa: E501
+            'Retry llm-up later. If capacity does not return, select an available '  # noqa: E501
+            'GPU in RunPod and deliberately replace the persisted pod. '
             + storage
+        ) from None
+
+
+def _is_capacity_error(exc: RuntimeError) -> bool:
+    """Return whether a provider failure specifically reports GPU capacity."""
+    message = str(exc).lower()
+    return (
+        'no instances currently available' in message
+        or 'not enough free gpus on the host machine' in message
+    )
+
+
+def _create_pod_or_raise(
+    client: PodProvider, config: Settings, public_key: str
+) -> str:
+    """Create a pod and add useful context to known capacity failures."""
+    try:
+        return client.create_pod(pod_create_body(config, public_key))
+    except RunPodAPIError as exc:
+        if not _is_capacity_error(exc):
+            raise
+        raise RuntimeError(
+            'RunPod could not create a pod: no instances are currently '
+            'available for the configured request. Retry llm-up later. '
+            'If this '
+            'persists, check availability for RUNPOD_GPU_TYPE and '
+            'RUNPOD_CLOUD_TYPE in RunPod before changing configuration.'
         ) from None
 
 
@@ -198,7 +225,6 @@ def up(
         deps.sleep,
         state.record_activation_failure,
     ):
-        state.clear_activation_failure()
         ensure_acp_registration(config)
         public_key = config.runpod_ssh_key.with_suffix(
             config.runpod_ssh_key.suffix + '.pub'
@@ -210,8 +236,8 @@ def up(
         pod = _select_pod(state, client, config.runpod_pod_name)
         if pod is None:
             state.set_activation_status('Creating a RunPod pod')
-            pod_id = client.create_pod(
-                pod_create_body(config, public_key.read_text().strip())
+            pod_id = _create_pod_or_raise(
+                client, config, public_key.read_text().strip()
             )
             state.write_pod_id(pod_id)
         else:
@@ -297,7 +323,7 @@ def up(
                 str(config.remote_vllm_port),
                 str(config.vllm_start_timeout_seconds),
             ],
-            input=_asset_text('remote/ensure-vllm.sh'),
+            input=_asset_text('remote', 'ensure-vllm.sh'),
         )
         (manager.state_dir / 'runtime.env').write_text(
             f'SSH_HOST={host}\nSSH_PORT={port}\nSSH_KEY={config.runpod_ssh_key}\n'
@@ -317,6 +343,7 @@ def up(
                     for item in models
                 ):
                     state.set_activation_status('Runtime ready')
+                    state.clear_activation_failure()
                     return
             except (requests.RequestException, ValueError):
                 pass

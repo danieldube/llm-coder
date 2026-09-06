@@ -59,6 +59,15 @@ Use `llm-down --remove-integration` to remove the generated OpenCode file and
 this installation's named JetBrains ACP entry as well. Credentials, Pod state,
 remote storage, and unrelated ACP entries are never removed by that option.
 
+## Startup failures
+
+`llm-up` reports the failed activation stage and a saved runtime diagnostic.
+When RunPod has no capacity for the configured GPU and cloud type, retry later;
+if it persists, check availability in RunPod before changing configuration.
+For other failures, use the command printed by `llm-up` to inspect the user
+service journal. `opencode-runpod` reports a failed background prewarm on
+standard error while OpenCode starts immediately.
+
 ## Runtime image
 
 RunPod starts the prebuilt vLLM image published to GHCR rather than installing
