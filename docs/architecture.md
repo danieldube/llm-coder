@@ -103,3 +103,18 @@ The local controller keeps side effects behind focused modules:
 Runtime orchestration accepts explicit command, monotonic-clock, sleep, systemd,
 and provider dependencies. Tests can therefore supply deterministic fakes
 without replacing module globals or contacting RunPod, SSH, or systemd.
+
+## Status contract
+
+`llm-status` reads `LoadState`, `ActiveState`, and `SubState` from user systemd
+and looks up the persisted RunPod ID through the typed provider client. It does
+not select a pod or silently substitute a same-named pod. When no identity is
+persisted, a name query is used only to diagnose absent or ambiguous legacy
+pods. Output distinguishes inactive, activating, failed, missing, and
+uninspectable units; an absent selection, a deleted selected pod, ambiguous
+legacy names, provider API/protocol failures, and the provider lifecycle value.
+
+The command's exit codes are stable for automation: `0` means every component
+is healthy, `1` means the stack is wholly inactive, `2` means inspection
+succeeded but components are inconsistent or degraded, and `3` means at least
+one systemd, provider, or endpoint inspection could not be completed.

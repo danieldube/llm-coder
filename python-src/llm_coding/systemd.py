@@ -4,6 +4,8 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from .config import Settings
@@ -30,6 +32,69 @@ class Systemd:
         return self._runner(
             ['systemctl', '--user', *args], check=check, capture_output=True
         )
+
+
+class UnitState(str, Enum):
+    """Normalized states exposed by status inspection."""
+
+    ACTIVE = 'active'
+    ACTIVATING = 'activating'
+    INACTIVE = 'inactive'
+    FAILED = 'failed'
+    NOT_FOUND = 'not-found'
+    INSPECTION_FAILED = 'inspection-failed'
+
+
+@dataclass(frozen=True)
+class UnitStatus:
+    """Typed result of inspecting one user-systemd unit."""
+
+    name: str
+    state: UnitState
+    sub_state: str = ''
+    invocation_id: str = ''
+    detail: str = ''
+
+
+def inspect_unit(
+    name: str, controller: SystemdController | None = None
+) -> UnitStatus:
+    """Inspect a unit without treating normal inactive states as failures."""
+    controller = controller or Systemd()
+    try:
+        result = controller.run(
+            'show',
+            '--property=LoadState',
+            '--property=ActiveState',
+            '--property=SubState',
+            '--property=InvocationID',
+            name,
+            check=False,
+        )
+    except OSError as exc:
+        return UnitStatus(name, UnitState.INSPECTION_FAILED, detail=str(exc))
+
+    properties: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if '=' in line:
+            key, value = line.split('=', 1)
+            properties[key] = value
+    if properties.get('LoadState') == 'not-found':
+        return UnitStatus(name, UnitState.NOT_FOUND)
+    active_state = properties.get('ActiveState', '')
+    try:
+        state = UnitState(active_state)
+    except ValueError:
+        detail = (result.stderr or result.stdout).strip()
+        if not detail:
+            detail = f'systemctl exited {result.returncode}'
+        return UnitStatus(name, UnitState.INSPECTION_FAILED, detail=detail)
+    return UnitStatus(
+        name,
+        state,
+        properties.get('SubState', ''),
+        properties.get('InvocationID', ''),
+    )
 
 
 def runtime_command() -> str:
