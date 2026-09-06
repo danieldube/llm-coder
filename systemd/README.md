@@ -15,3 +15,19 @@ Do not enable the proxy or tunnel directly. Only `llm-coding.socket` is enabled.
 The proxy invokes the packaged `llm-runtime up` and `llm-runtime down`
 subcommands. Its stop hook performs transient shutdown: the tunnel and selected
 Pod stop, while the persisted Pod ID and durable IDE integration remain.
+
+`llm-down` stops the socket without disabling it. Idle exit leaves the socket
+listening. `llm-down --remove-integration` also leaves unit files and socket
+enablement intact; see [complete removal](../docs/configuration.md#removal).
+
+Generated units contain absolute paths to the installed `llm-runtime`. Keep
+that Python environment available until services are stopped. After changing
+ports or executable paths, stop the runtime and rerun `llm-install`; writing
+unit files and reloading systemd does not replace an already-active listener.
+Services inherit the user manager environment, not shell-only configuration
+or XDG overrides.
+
+The proxy uses `Type=notify`, a startup timeout equal to both configured startup
+budgets plus 120 seconds, and a three-minute stop timeout. Its `ExecStopPost`
+also runs after startup failure. The tunnel uses `Restart=on-failure` and
+`RestartSec=5`. `IDLE_SHUTDOWN` counts time without active connections.

@@ -15,16 +15,28 @@ sandbox**.
 ## Default reductions in exposure
 
 - vLLM binds to `127.0.0.1` inside the Pod; only SSH is publicly exposed.
-- The RunPod API key is stored in a separate mode-0600 file and is not exported
-  to OpenCode.
+- Store the RunPod API key in a separate mode-0600 file. File-loaded settings
+  are not exported to OpenCode, but the wrapper inherits the parent environment
+  without filtering: an exported API key will reach OpenCode. The loader does
+  not enforce permissions on existing configuration files.
 - A dedicated SSH key is used for this stack rather than the developer's main
   SSH identity.
 - Private GHCR images are pulled by RunPod with a dedicated, read-only package
   token stored as a RunPod registry credential; the local configuration holds
   only its opaque ID.
 - OpenCode denies external-directory tools, `.env` reads, `git push`, `sudo`,
-  and `ssh`; arbitrary shell/build commands require approval.
+  and `ssh` in the generated permission policy; most shell/build commands
+  require approval. Read-oriented commands such as `rg`, `grep`, and selected
+  `git` operations are allowed. OpenCode can merge other configuration sources,
+  so the generated file is not an exclusive policy boundary. See the upstream
+  [configuration rules](https://opencode.ai/docs/config/).
 - JetBrains custom MCP forwarding is disabled by default.
+
+The localhost HTTP endpoint has no API authentication; other local processes
+can use it and trigger activation. The vLLM launcher enables request logging
+to `/workspace/llm-coding/vllm.log`, which may retain prompts and source code.
+Treat remote logs and copied journal diagnostics as sensitive. Runtime error
+reporting can include provider response bodies and remote startup log excerpts.
 
 These controls reduce accidental exposure. They do not prevent an approved
 shell command from accessing anything the Unix user can access.
@@ -64,12 +76,15 @@ current session. To remove the durable IDE integration, use
 the configured llm-coding ACP agent name and preserves unrelated ACP entries;
 it does not delete credentials, Pod identity, or remote storage.
 
-### Runtime dependencies
+## Runtime dependencies
 
-The remote inference runtime is a pinned unit: the RunPod base image, CUDA
-runtime, PyTorch CUDA build, vLLM CUDA build, and model revision must be
-changed together or explicitly validated for compatibility. Do not repair CUDA
-mismatches by copying individual CUDA shared libraries into the image.
+Treat the RunPod base image, CUDA runtime, PyTorch/vLLM CUDA builds, model
+revision, and tool parser as one compatibility set when making changes. The
+base image uses a tag and transitive packages are resolved during image builds;
+SHA-derived image tags are not immutable. Use a published digest to select
+fixed image bytes. The controller does not validate the installed versions
+against local settings. Do not repair CUDA mismatches by copying individual
+CUDA shared libraries into the image.
 
 The runtime-image publishing workflow uses GitHub Actions' short-lived
 `GITHUB_TOKEN`. Do not add a personal GitHub token to repository or Actions
@@ -85,14 +100,15 @@ OS-level sandbox when repository trust is not established.
 
 ## Updating OpenCode
 
-OpenCode has previously shipped security fixes affecting local command
-execution. OpenCode executables come exclusively from the versioned upstream
+New OpenCode downloads come exclusively from the versioned upstream
 GitHub release at `anomalyco/opencode`; the project does not execute the remote
 installer. `python-src/llm_coding/opencode.py` is the authoritative allowlist
 of release versions, platform/architecture artifact names, and SHA-256 hashes.
-The downloader follows redirects with status checks and strict time and size
-limits, then verifies the allowlisted digest before safely extracting and
-atomically replacing the existing executable.
+The downloader follows redirects with status checks, connect/read timeouts,
+and download/executable size limits, then verifies the allowlisted digest
+before safely extracting and atomically replacing the existing executable. An existing executable reporting
+the requested version is reused without digest verification; these checks
+protect new downloads, not an already-compromised local installation.
 
 To update OpenCode, review upstream security advisories and the tagged release,
 download every supported CLI archive directly from that release, and calculate

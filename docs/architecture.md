@@ -1,135 +1,202 @@
 # Architecture
 
-```text
-CLion
-  | ACP / stdio
-  v
-OpenCode (host-native)
-  |
-  | OpenAI-compatible HTTP
-  v
-127.0.0.1:18000
-  |
-  | systemd socket activation
-  v
-systemd-socket-proxyd
-  |
-  v
-127.0.0.1:18001
-  |
-  | SSH local forwarding
-  v
-RunPod localhost:8000
-  |
-  v
-vLLM -> Qwen3-Coder
+## Request path
+
+Ports shown are the defaults. Both host listeners and vLLM bind to loopback.
+
+```mermaid
+flowchart TD
+    IDE[JetBrains IDE] -->|ACP / stdio| OC[OpenCode on workstation]
+    OC -->|HTTP /v1| Socket["systemd socket<br/>127.0.0.1:18000"]
+    Socket --> Proxy[systemd-socket-proxyd]
+    Proxy --> Tunnel["SSH tunnel<br/>127.0.0.1:18001"]
+    Tunnel -->|encrypted forwarding| VLLM["vLLM on RunPod<br/>127.0.0.1:8000"]
+    VLLM --> Model[Qwen3-Coder]
 ```
 
-## Responsibility split
+OpenCode owns local file, shell, build, and test operations. The Python
+controller manages one non-interruptible GPU Pod through the RunPod REST API,
+then connects as `root` over its public TCP SSH endpoint. Only `22/tcp` is
+requested in the Pod definition. Model requests travel through SSH; lifecycle
+requests use the RunPod HTTPS API.
 
-- **OpenCode**: local coding agent, source tree, local compiler/build/test tools.
-- **systemd socket/proxy**: stable local endpoint and lazy activation.
-- **GHCR runtime image**: pinned vLLM/CUDA runtime and launcher, published by
-  the release workflow.
-- **Python RunPod controller**: idempotent pod create/start/stop/discovery.
-- **SSH tunnel**: encrypted transport; vLLM is bound only to RunPod localhost.
-- **vLLM**: OpenAI-compatible model serving and native tool calling.
-- **RunPod persistent volume**: model cache and pinned vLLM virtual environment.
+## Activation and shutdown
 
-## Lifecycle
+### Activation
 
-1. OpenCode starts immediately through ACP.
-2. `opencode-runpod` prewarms `127.0.0.1:18000` in the background.
-3. The first connection activates `llm-coding-proxy.service`.
-4. The runtime reconciles the mode-0600 Pod ID stored in the user state
-   directory with RunPod. A name lookup is used only to adopt an existing Pod
-   when no live persisted identity exists; ambiguous matches stop activation.
-   Startup, shutdown, installation, and integration removal share a
-   nonblocking lifecycle lock. Contending commands retry for the configured
-   bounded interval and report which lifecycle operation is in progress;
-   shutdown never edits endpoint state or stops a Pod unless it holds the lock.
-5. The runtime creates or resumes the selected Pod, discovers its current SSH
-   address, and binds that endpoint to the persisted Pod ID. It preserves the
-   host key while the endpoint is stable; a provider-confirmed address rotation
-   removes only the obsolete entry before enrolling the replacement. It then
-   starts prebuilt vLLM and the SSH tunnel.
-6. `systemd-socket-proxyd` forwards the already-open client connection to the
-   tunnel.
-7. After the configured idle period, the proxy exits.
-8. `ExecStopPost` stops the tunnel and persisted RunPod, retaining both the
-   Pod identity and `/workspace` so the next activation reuses it. This idle
-   stop also retains the generated OpenCode configuration, JetBrains ACP
-   registration, and installation configuration.
+```mermaid
+flowchart TD
+    Request["OpenCode or llm-up<br/>Connect to local proxy port"]
+    Startup["Proxy ExecStartPre<br/>llm-runtime up"]
+    Pod["RunPod API<br/>Select, create or resume Pod"]
+    SSH["Discover SSH endpoint<br/>Verify host and wait for SSH"]
+    Model["Run ensure-vllm.sh over SSH<br/>Wait for expected model"]
+    Tunnel["Start SSH tunnel<br/>Verify direct HTTP endpoint"]
+    Proxy["Start systemd-socket-proxyd<br/>Forward queued connection"]
+    Request --> Startup --> Pod --> SSH --> Model --> Tunnel --> Proxy
+```
 
-`llm-down` is an explicit stop: it first disables the socket listener and
-stops the proxy, then performs the same transient shutdown used by
-`ExecStopPost`. It preserves all durable integration and Pod identity state.
-`llm-down --remove-integration` additionally prompts before deleting this
-installation's generated OpenCode configuration and its named JetBrains ACP
-entry. It does not delete unrelated ACP agents, local installation
-configuration, credentials, the reusable Pod identity, or remote storage.
+### Idle shutdown
 
-## Security boundary
+```mermaid
+flowchart TD
+    Idle["No active proxy connections<br/>for IDLE_SHUTDOWN"]
+    Exit["systemd-socket-proxyd exits"]
+    Shutdown["Proxy ExecStopPost<br/>llm-runtime down"]
+    Tunnel["Stop SSH tunnel"]
+    Pod["Stop selected running Pod"]
+    Ready["Socket remains listening<br/>Next connection activates runtime"]
+    Idle --> Exit --> Shutdown --> Tunnel --> Pod --> Ready
+```
 
-OpenCode does not receive the RunPod API key or the dedicated RunPod SSH key as
-environment variables. The packaged `llm-runtime` lifecycle command reads them
-from mode-restricted configuration instead. This reduces accidental exposure
-but is not isolation: a host-native process still runs with the Unix user's
-filesystem authority. The vLLM port is never exposed publicly; only SSH is
-exposed by RunPod.
+### Lifecycle details
 
-OpenCode itself is not an OS sandbox. Its shell/file permission policy is a
-human-approval mechanism. Use this setup only with repositories you trust, or
-add an OS-level sandbox/container/VM when handling untrusted repositories.
+`opencode-runpod` generates configuration and starts `llm-up` in the background
+while OpenCode starts. `llm-up` ensures generated units match configuration,
+opens `/v1/models` on the socket, and monitors activation. It also recovers an
+active proxy whose tunnel no longer responds.
 
-## Runtime image releases
+Pod selection uses `runtime.pod-id` first. Only a missing selection or a
+provider 404 permits exact-name adoption; multiple matches fail. A new Pod is
+created only by startup when no match exists. Shutdown uses the same selection
+logic and can adopt a named Pod; status never adopts or replaces a selection.
+A live persisted ID takes precedence over changes to `RUNPOD_POD_NAME`.
 
-`docker/` is built only when its Docker inputs change on `main` or through an
-explicit GitHub Actions dispatch, and is published to GitHub Container Registry
-(GHCR). The resulting image must be referenced by its immutable `sha-<commit>`
-tag in `RUNPOD_IMAGE`; never use `latest`. For a private GHCR image, configure
-a RunPod registry credential with a dedicated read-only `read:packages` token
-and set its opaque credential ID in `RUNPOD_CONTAINER_REGISTRY_AUTH_ID`. The
-token is stored by RunPod and is never written to local configuration or passed
-into the Pod.
+The SSH endpoint is bound to the selected Pod ID in local state. Stable
+endpoints retain their host key. A provider-confirmed endpoint change for the
+same Pod removes only the obsolete address from `known_hosts`. A changed Pod
+identity or host-key mismatch fails closed. See [SSH trust](../SECURITY.md#dynamic-ssh-endpoints-and-host-keys).
+
+Runtime startup, shutdown, full installation, and integration removal share a
+nonblocking `flock` with bounded retries. Installation waits up to 30 seconds;
+other operations use `LIFECYCLE_LOCK_TIMEOUT_SECONDS`. This does not serialize
+all CLI actions: `llm-up` unit reconciliation and `llm-down` socket/proxy stops
+occur outside that lock. Never delete `runtime.lock` to resolve contention.
+
+The proxy startup budget is `RUNPOD_START_TIMEOUT_SECONDS` plus
+`VLLM_START_TIMEOUT_SECONDS` plus 120 seconds. Pod endpoint discovery and SSH
+readiness share the first budget; tunnel readiness gets 60 seconds. The proxy
+stop timeout is three minutes. The tunnel restarts on failure after five
+seconds. These budgets are not individual subprocess deadlines.
+
+Idle means no active proxy connections, not absence of generated tokens.
+`llm-down` stops the listener and proxy before runtime shutdown; it does not
+remove socket enablement. Shutdown clears transient runtime metadata and
+attempts both tunnel and Pod cleanup, reporting accumulated errors.
+`ExecStopPost` also runs after failed activation; diagnostics may be cleared
+by cleanup, so the service journal is the fallback.
+
+`llm-down --remove-integration` asks for confirmation before any shutdown and
+then removes `opencode.json` and the configured ACP agent entry. It preserves
+units, configuration, credentials, Pod identity, storage, and other agents.
+Future installation or activation can recreate the integration.
+
+## Remote runtime and storage
+
+The image contains Python 3.11 and the vLLM environment at
+`/opt/llm-coding/vllm`. It retains the RunPod base image's SSH startup command.
+The controller sends the packaged `remote/ensure-vllm.sh` over SSH; this script
+runs `/opt/llm-coding/bin/start-vllm.sh`, rather than installing dependencies.
+
+`/workspace/llm-coding/` contains the Hugging Face cache (`huggingface/`),
+`vllm.pid`, `vllm.log`, and `runtime.signature`. The script reuses a healthy
+server only when its configuration signature matches; otherwise it stops the
+recorded vLLM process and launches the image's executable. Version settings
+participate in that signature but do not verify or replace installed binaries.
+The launcher enables prefix caching, request logging, and automatic tool choice.
+
+Keep `RUNPOD_VOLUME_MOUNT_PATH=/workspace`: the script's storage path is fixed.
+The default Pod volume survives stops but is tied to the Pod. An optional
+network volume is independently managed. The controller never deletes Pods
+or volumes. In particular, the vLLM virtual environment is in the image, not
+on the persistent volume.
+
+## Local state and integration
+
+See [configuration paths](configuration.md#paths) for XDG locations.
+
+| State file | Role | Retained after shutdown |
+| --- | --- | --- |
+| `runtime.pod-id` | Selected provider identity; atomic, mode 0600 | Yes |
+| `runtime.ssh-endpoint.json` | Pod ID, host, port; atomic, mode 0600 | Yes |
+| `known_hosts` | Installation-specific SSH trust, mode 0600 | Yes |
+| `runtime.lock` | Lifecycle lock and last operation label, mode 0600 | Yes |
+| `runtime.env` | Tunnel host, port, and key path | No |
+| `runtime.activation-status` | Latest startup stage, mode 0600 | No |
+| `runtime.activation-error` | Best-effort startup failure, mode 0600 | No |
+| `opencode.json` | Generated provider and permission configuration | Unless integration is removed |
+
+Only identity and SSH endpoint writes use atomic replacement. Directory modes,
+`runtime.env`, and generated OpenCode file modes depend on the user's umask.
+Activation diagnostics are best-effort and are not a durable audit log.
+
+ACP registration writes `~/.jetbrains/acp.json`, preserves other agent entries,
+and updates the shared `default_mcp_settings`. IDEA MCP defaults to enabled;
+custom MCP defaults to disabled. These defaults can affect other ACP agents.
+OpenCode configuration is regenerated on wrapper launch and successful
+`llm-up`; edit the templates or settings instead of generated files.
 
 ## Python module boundaries
 
-The local controller keeps side effects behind focused modules:
+| Module | Responsibility |
+| --- | --- |
+| `config.py` | Immutable settings, parsing, validation, XDG paths |
+| `runpod.py` | REST requests, response validation, Pod creation payload |
+| `systemd.py` | Authoritative unit renderer and user-systemd operations |
+| `ssh.py` | Host authentication, endpoint rotation, tunnel execution |
+| `opencode.py` | Release installation, configuration, ACP, process launch |
+| `state.py` | Identity persistence, diagnostics, lifecycle lock |
+| `runtime.py` | Lifecycle orchestration |
+| `status.py` | Unit/provider/endpoint inspection and aggregation |
+| `cli.py` | Click commands, activation monitoring, diagnostics |
+| `interfaces.py` | Injectable transport, command, clock, and state protocols |
+| `core.py` | Compatibility exports and legacy helpers |
 
-- `config.py` owns immutable `Settings`, validation, and XDG paths.
-- `runpod.py` owns typed provider transport and response contracts.
-- `systemd.py` owns unit rendering and user `systemctl` calls.
-- `ssh.py` owns transient-host authentication and tunnel commands.
-- `opencode.py` owns installation, generated configuration, and ACP state.
-- `state.py` atomically persists private pod identity and activation status.
-- `runtime.py` composes those services into lifecycle operations, while
-  `cli.py` presents Click commands and output.
-
-Runtime orchestration accepts explicit command, monotonic-clock, sleep, systemd,
-and provider dependencies. Tests can therefore supply deterministic fakes
-without replacing module globals or contacting RunPod, SSH, or systemd.
-
-## Activation diagnostics
-
-The lifecycle command writes a non-sensitive activation failure to private
-state before systemd marks the proxy failed. `llm-up` reads that diagnostic and
-reports it with the current activation stage. Known RunPod capacity failures are
-translated into retry and availability guidance; other provider errors retain
-their provider detail. OpenCode's background prewarm surfaces failed `llm-up`
-output on standard error without delaying OpenCode startup.
+Runtime accepts command, clock, sleep, systemd, and provider dependencies.
+HTTP readiness probes still use `requests` directly; tests mock those calls.
+Packaged assets under `python-src/llm_coding/assets/` supply installed runtime
+resources. Root `config/` and `remote/` copies must remain synchronized.
+`python-src/main.py` is a legacy scaffold, not an installed entry point.
 
 ## Status contract
 
-`llm-status` reads `LoadState`, `ActiveState`, and `SubState` from user systemd
-and looks up the persisted RunPod ID through the typed provider client. It does
-not select a pod or silently substitute a same-named pod. When no identity is
-persisted, a name query is used only to diagnose absent or ambiguous legacy
-pods. Output distinguishes inactive, activating, failed, missing, and
-uninspectable units; an absent selection, a deleted selected pod, ambiguous
-legacy names, provider API/protocol failures, and the provider lifecycle value.
+`llm-status` inspects `LoadState`, `ActiveState`, and `SubState`, looks up the
+persisted Pod, and probes `/v1/models` through the direct tunnel. It neither
+activates the socket nor checks the response for the expected model ID.
 
-The command's exit codes are stable for automation: `0` means every component
-is healthy, `1` means the stack is wholly inactive, `2` means inspection
-succeeded but components are inconsistent or degraded, and `3` means at least
-one systemd, provider, or endpoint inspection could not be completed.
+| Exit | Meaning |
+| --- | --- |
+| `0` | All units active, Pod `RUNNING`, tunnel HTTP successful |
+| `1` | All units inactive/missing and Pod stopped/absent; also CLI configuration errors |
+| `2` | Inspection completed, but components are inconsistent or degraded |
+| `3` | Unit, provider, or endpoint inspection failed |
+
+A listening socket with stopped proxy/tunnel/Pod produces `2`, including after
+normal idle shutdown. API and protocol errors remain distinct in output.
+
+## Security boundary
+
+OpenCode runs with the local user's filesystem and process permissions; tool
+approval is not an OS sandbox. Secrets loaded from files are not exported by
+the launcher, but existing environment variables are inherited. Local HTTP has
+no API authentication. Remote request logs may contain prompts and source.
+Use trusted repositories and read [SECURITY.md](../SECURITY.md).
+
+## Runtime image releases
+
+`.github/workflows/publish-runtime-image.yml` publishes `linux/amd64` to
+`ghcr.io/<owner>/<repository>-runtime` when `docker/**`, `.dockerignore`, or the
+publishing workflow changes on `main`, or on manual dispatch. Its default tag
+is `sha-<first-12-commit-characters>`; dispatch can supply another tag. The
+workflow publishes provenance using `GITHUB_TOKEN`.
+
+A SHA-derived tag is a naming convention, not enforced immutability: rebuilding
+the same tag can replace it. Use the published image digest for a fixed image
+reference. The base image is tag-pinned and Python/transitive dependencies are
+resolved at build time, so a commit alone does not guarantee identical bytes.
+Configuration does not enforce a tag or digest policy.
+
+For private GHCR images, store a read-only package token as a RunPod registry
+credential and set only its ID locally. The publishing repository determines
+the image name; do not assume the example repository path is your output.
+See [upstream references](references.md) for registry authentication and pins.
