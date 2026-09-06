@@ -40,6 +40,7 @@ from .state import (
 from .systemd import Systemd, run_command
 from .systemd import ensure_socket as systemd_ensure_socket
 from .systemd import install as systemd_install
+from .vllm import VLLMProtocolError, response_model_ids
 
 
 class PodProvider(Protocol):
@@ -335,21 +336,29 @@ def up(
         deadline = deps.monotonic() + 60
         endpoint = f'http://127.0.0.1:{config.local_tunnel_port}/v1/models'
         state.set_activation_status('Verifying vLLM through the SSH tunnel')
+        protocol_error: VLLMProtocolError | None = None
         while deps.monotonic() < deadline:
             try:
-                models = (
-                    requests.get(endpoint, timeout=2).json().get('data', [])
-                )
-                if any(
-                    item.get('id') == config.served_model_name
-                    for item in models
-                ):
+                response = requests.get(endpoint, timeout=2)
+                model_ids = response_model_ids(response)
+                protocol_error = None
+                if config.served_model_name in model_ids:
                     state.set_activation_status('Runtime ready')
                     state.clear_activation_failure()
                     return
-            except (requests.RequestException, ValueError):
-                pass
+            except VLLMProtocolError as exc:
+                # vLLM can briefly return an incomplete response while it is
+                # becoming ready. Retry, but preserve the last protocol error
+                # so a persistently malformed endpoint is diagnosed clearly.
+                protocol_error = exc
+            except requests.RequestException:
+                protocol_error = None
             deps.sleep(2)
+        if protocol_error is not None:
+            raise RuntimeError(
+                'SSH tunnel returned malformed vLLM responses: '
+                f'{protocol_error}'
+            ) from None
         raise RuntimeError('SSH tunnel did not become healthy')
 
 

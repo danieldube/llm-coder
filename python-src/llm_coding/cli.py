@@ -10,7 +10,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import click
 import requests
@@ -29,6 +28,12 @@ from .runtime import install as runtime_install
 from .runtime import remove_integration as runtime_remove_integration
 from .status import ProviderState, inspect_provider, inspect_runtime
 from .systemd import inspect_unit
+from .vllm import (
+    VLLMProtocolError,
+    parse_model_ids,
+    parse_model_ids_json,
+    response_model_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +100,7 @@ def read_activation_status(state_dir: Path) -> str:
 
 
 def print_runtime_ready_summary(
-    config: Settings, state_dir: Path, proxy_models: dict[str, Any]
+    config: Settings, state_dir: Path, proxy_models: object
 ) -> None:
     """Print a concise, evidence-based summary after successful activation."""
     model = config.served_model_name
@@ -105,23 +110,23 @@ def print_runtime_ready_summary(
     # The proxy response proves the public local endpoint. Probe the direct
     # tunnel too, so the summary does not merely report that a stale proxy was
     # reachable.
-    if not any(
-        item.get('id') == model for item in proxy_models.get('data', [])
-    ):
+    try:
+        proxy_model_ids = parse_model_ids(proxy_models)
+    except VLLMProtocolError as exc:
+        fatal(f'Local proxy returned a malformed models response: {exc}')
+    if model not in proxy_model_ids:
         fatal(f'Local proxy does not serve expected model {model}')
     try:
-        tunnel_models = (
+        tunnel_model_ids = response_model_ids(
             requests.get(
                 f'http://127.0.0.1:{tunnel_port}/v1/models', timeout=5
             )
-            .json()
-            .get('data', [])
         )
-    except (requests.RequestException, ValueError) as exc:
+    except (requests.RequestException, VLLMProtocolError) as exc:
         fatal(
             f'Proxy responded, but the direct SSH tunnel check failed: {exc}'
         )
-    if not any(item.get('id') == model for item in tunnel_models):
+    if model not in tunnel_model_ids:
         fatal(
             'Proxy responded, but the SSH tunnel does not serve expected '
             f'model {model}'
@@ -437,13 +442,11 @@ def llm_up() -> None:
             print('No response from endpoint', file=sys.stderr)
             sys.exit(1)
 
-        try:
-            proxy_models = json.loads(response)
-        except json.JSONDecodeError:
-            print(response, end='')
-            return
+        proxy_model_ids = parse_model_ids_json(response)
         print_runtime_ready_summary(
-            config, config_manager.state_dir, proxy_models
+            config,
+            config_manager.state_dir,
+            {'data': [{'id': model_id} for model_id in proxy_model_ids]},
         )
 
     except (
@@ -673,13 +676,11 @@ def llm_doctor(activate: bool) -> None:
         click.get_current_context().invoke(llm_up)
         print('RunPod/vLLM activation')
         endpoint = f'http://127.0.0.1:{config.local_proxy_port}/v1'
-        models = (
+        model_ids = response_model_ids(
             requests.get(endpoint + '/models', timeout=30)
-            .json()
-            .get('data', [])
         )
         model = config.served_model_name
-        if not any(item.get('id') == model for item in models):
+        if model not in model_ids:
             fatal('Expected model is not served')
         print('Expected model ' + model)
         completion = requests.post(
@@ -738,7 +739,7 @@ def llm_doctor(activate: bool) -> None:
         ):
             fatal('Tool calling test failed')
         print('Native tool calling')
-    except (requests.RequestException, ValueError) as e:
+    except (requests.RequestException, VLLMProtocolError, ValueError) as e:
         fatal(f'Activation test failed: {e}')
 
 
