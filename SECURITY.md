@@ -86,6 +86,20 @@ OS-level sandbox when repository trust is not established.
 ## Updating OpenCode
 
 OpenCode has previously shipped security fixes affecting local command
-execution. Keep `OPENCODE_VERSION` pinned, review upstream security advisories,
-then deliberately update the pin and run `make check` plus
-`llm-doctor --activate`.
+execution. OpenCode executables come exclusively from the versioned upstream
+GitHub release at `anomalyco/opencode`; the project does not execute the remote
+installer. `python-src/llm_coding/opencode.py` is the authoritative allowlist
+of release versions, platform/architecture artifact names, and SHA-256 hashes.
+The downloader follows redirects with status checks and strict time and size
+limits, then verifies the allowlisted digest before safely extracting and
+atomically replacing the existing executable.
+
+To update OpenCode, review upstream security advisories and the tagged release,
+download every supported CLI archive directly from that release, and calculate
+each SHA-256 digest independently (for example, with `sha256sum`). Add the new
+version and every supported platform/architecture pair to
+`_RELEASE_ARTIFACTS`, update both checked-in `OPENCODE_VERSION` examples, and
+review the resulting artifact-name and digest diff. Never derive a trusted
+digest from the artifact being verified at install time. Run the full checks
+in `CONTRIBUTING.md`, install into a clean environment, and verify with
+`llm-doctor --activate` before release.

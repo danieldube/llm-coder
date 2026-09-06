@@ -1,17 +1,58 @@
 """OpenCode installation, configuration, and JetBrains ACP integration."""
 
+import hashlib
 import importlib.resources
 import json
 import os
+import platform
+import stat
 import subprocess
 import sys
-from pathlib import Path
+import tarfile
+import tempfile
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import requests
 
 from .config import Settings
 from .interfaces import CommandRunner
+
+_RELEASE_BASE_URL = 'https://github.com/anomalyco/opencode/releases/download'
+_DOWNLOAD_LIMIT = 100 * 1024 * 1024
+_DOWNLOAD_TIMEOUT = (10, 120)
+
+
+@dataclass(frozen=True)
+class _ReleaseArtifact:
+    filename: str
+    sha256: str
+
+
+# This is intentionally an allowlist: a configured version cannot silently
+# select an artifact that has not been reviewed and hashed by this project.
+_RELEASE_ARTIFACTS: dict[str, dict[tuple[str, str], _ReleaseArtifact]] = {
+    '1.18.14': {
+        ('Linux', 'x86_64'): _ReleaseArtifact(
+            'opencode-linux-x64.tar.gz',
+            'f23980ba2aebfbfa53948e55e213d3f2a53740fd7326553828e89ad27e970572',
+        ),
+        ('Linux', 'aarch64'): _ReleaseArtifact(
+            'opencode-linux-arm64.tar.gz',
+            '27ede7aa2080002459d8c970a40016bbef49cd13bb467302777da67467f1602d',
+        ),
+        ('Darwin', 'x86_64'): _ReleaseArtifact(
+            'opencode-darwin-x64.zip',
+            '78b2e99a9094ce7a4fb38416990d2b9b23e5f99a9992a37b04fb861f24c48925',
+        ),
+        ('Darwin', 'arm64'): _ReleaseArtifact(
+            'opencode-darwin-arm64.zip',
+            'ad8125bb649086eb9210a87bbd27ac453a526e2432aebd4d3c9853e2d42e3291',
+        ),
+    }
+}
 
 
 def _value(
@@ -140,8 +181,80 @@ def remove_acp_registration(config: Settings | dict[str, str]) -> None:
         ) from exc
 
 
+def _safe_archive_path(name: str) -> bool:
+    path = PurePosixPath(name.replace('\\', '/'))
+    return not path.is_absolute() and '..' not in path.parts
+
+
+def _copy_limited(source: Any, destination: Any) -> None:
+    total = 0
+    while chunk := source.read(1024 * 1024):
+        total += len(chunk)
+        if total > _DOWNLOAD_LIMIT:
+            raise RuntimeError('OpenCode executable exceeds the size limit')
+        destination.write(chunk)
+
+
+def _extract_executable(archive: Path, output: Path) -> None:
+    try:
+        if archive.name.endswith('.zip'):
+            with zipfile.ZipFile(archive) as bundle:
+                zip_entries = bundle.infolist()
+                if any(
+                    not _safe_archive_path(item.filename)
+                    for item in zip_entries
+                ):
+                    raise RuntimeError(
+                        'OpenCode archive contains an unsafe path'
+                    )
+                zip_candidates = [
+                    item
+                    for item in zip_entries
+                    if not item.is_dir()
+                    and PurePosixPath(item.filename).name == 'opencode'
+                ]
+                if len(zip_candidates) != 1:
+                    raise RuntimeError(
+                        'OpenCode archive does not contain one executable'
+                    )
+                with (
+                    bundle.open(zip_candidates[0]) as source,
+                    output.open('wb') as destination,
+                ):
+                    _copy_limited(source, destination)
+        else:
+            with tarfile.open(archive, mode='r:gz') as bundle:
+                tar_entries = bundle.getmembers()
+                if any(
+                    not _safe_archive_path(item.name)
+                    or item.issym()
+                    or item.islnk()
+                    for item in tar_entries
+                ):
+                    raise RuntimeError(
+                        'OpenCode archive contains an unsafe path'
+                    )
+                tar_candidates = [
+                    item
+                    for item in tar_entries
+                    if item.isfile()
+                    and PurePosixPath(item.name).name == 'opencode'
+                ]
+                if len(tar_candidates) != 1:
+                    raise RuntimeError(
+                        'OpenCode archive does not contain one executable'
+                    )
+                tar_source = bundle.extractfile(tar_candidates[0])
+                if tar_source is None:
+                    raise RuntimeError('Cannot read OpenCode executable')
+                with tar_source, output.open('wb') as destination:
+                    _copy_limited(tar_source, destination)
+    except (tarfile.TarError, zipfile.BadZipFile, EOFError, OSError) as exc:
+        raise RuntimeError('Downloaded OpenCode archive is malformed') from exc
+
+
 def ensure_installed(config: Settings, run: CommandRunner) -> None:
-    """Install the configured OpenCode version when required."""
+    """Securely install the configured OpenCode release when required."""
     binary = Path.home() / '.opencode/bin/opencode'
     if (
         binary.exists()
@@ -151,18 +264,99 @@ def ensure_installed(config: Settings, run: CommandRunner) -> None:
         == config.opencode_version
     ):
         return
-    installer = requests.get('https://opencode.ai/install', timeout=60).text
-    run(
-        [
-            'bash',
-            '-s',
-            '--',
-            '--version',
-            config.opencode_version,
-            '--no-modify-path',
-        ],
-        input=installer,
-    )
+    releases = _RELEASE_ARTIFACTS.get(config.opencode_version)
+    if releases is None:
+        raise RuntimeError(
+            f'OpenCode version {config.opencode_version!r} is not configured'
+        )
+    key = (platform.system(), platform.machine())
+    artifact = releases.get(key)
+    if artifact is None:
+        raise RuntimeError(
+            f'OpenCode does not support platform {key[0]!r} '
+            f'architecture {key[1]!r}'
+        )
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    archive_path: Path | None = None
+    staged_path: Path | None = None
+    try:
+        archive_fd, archive_name = tempfile.mkstemp(
+            prefix='.opencode-download-',
+            suffix='-' + artifact.filename,
+            dir=binary.parent,
+        )
+        archive_path = Path(archive_name)
+        digest = hashlib.sha256()
+        total = 0
+        url = (
+            f'{_RELEASE_BASE_URL}/v{config.opencode_version}/'
+            f'{artifact.filename}'
+        )
+        try:
+            with (
+                os.fdopen(archive_fd, 'wb') as destination,
+                requests.get(
+                    url,
+                    stream=True,
+                    allow_redirects=True,
+                    timeout=_DOWNLOAD_TIMEOUT,
+                ) as response,
+            ):
+                response.raise_for_status()
+                length = response.headers.get('Content-Length')
+                if length is not None and int(length) > _DOWNLOAD_LIMIT:
+                    raise RuntimeError(
+                        'OpenCode download exceeds the size limit'
+                    )
+                for chunk in response.iter_content(1024 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > _DOWNLOAD_LIMIT:
+                        raise RuntimeError(
+                            'OpenCode download exceeds the size limit'
+                        )
+                    digest.update(chunk)
+                    destination.write(chunk)
+                if length is not None and total != int(length):
+                    raise RuntimeError('OpenCode download was truncated')
+        except (requests.RequestException, ValueError) as exc:
+            raise RuntimeError('Unable to download OpenCode release') from exc
+        if digest.hexdigest() != artifact.sha256:
+            raise RuntimeError('OpenCode release checksum does not match')
+
+        staged_fd, staged_name = tempfile.mkstemp(
+            prefix='.opencode-install-', dir=binary.parent
+        )
+        os.close(staged_fd)
+        staged_path = Path(staged_name)
+        _extract_executable(archive_path, staged_path)
+        staged_path.chmod(
+            stat.S_IRUSR
+            | stat.S_IWUSR
+            | stat.S_IXUSR
+            | stat.S_IRGRP
+            | stat.S_IXGRP
+            | stat.S_IROTH
+            | stat.S_IXOTH
+        )
+        result = run(
+            [str(staged_path), '--version'], check=False, capture_output=True
+        )
+        if (
+            result.returncode
+            or result.stdout.strip() != config.opencode_version
+        ):
+            raise RuntimeError(
+                'OpenCode executable reports an unexpected version'
+            )
+        staged_path.replace(binary)
+        staged_path = None
+    finally:
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
+        if staged_path is not None:
+            staged_path.unlink(missing_ok=True)
 
 
 def launch(config: Settings, state_dir: Path, args: list[str]) -> None:
