@@ -3,6 +3,7 @@
 Core functionality for llm-coding Python implementation
 """
 
+import importlib.resources
 import json
 import logging
 import os
@@ -254,56 +255,30 @@ def write_shell_assignment(key: str, value: str) -> str:
 def create_opencode_config(config: dict[str, str], state_dir: Path) -> Path:
     """Render OpenCode configuration"""
     # Read base config
-    base_config_path = Path(__file__).parent / 'config' / 'opencode.base.json'
     base_config: dict[str, Any]
-    if not base_config_path.exists():
-        # Fallback to using default base config
-        base_config = {
-            '$schema': 'https://opencode.ai/config.json',
-            'enabled_providers': ['runpod'],
-            'model': 'runpod/PLACEHOLDER',
-            'provider': {
-                'runpod': {
-                    'npm': '@ai-sdk/openai-compatible',
-                    'name': 'Self-hosted RunPod',
-                    'options': {'baseURL': 'http://127.0.0.1:18000/v1'},
-                    'models': {},
-                }
-            },
-            'permission': {
-                'read': {
-                    '*': 'allow',
-                    '*.env': 'deny',
-                    '*.env.*': 'deny',
-                    '*.env.example': 'allow',
-                },
-                'edit': 'allow',
-                'glob': 'allow',
-                'grep': 'allow',
-                'external_directory': 'deny',
-                'webfetch': 'ask',
-                'websearch': 'ask',
-                'task': 'ask',
-                'skill': 'ask',
-                'bash': {
-                    '*': 'ask',
-                    'git status*': 'allow',
-                    'git diff*': 'allow',
-                    'git log*': 'allow',
-                    'git show*': 'allow',
-                    'git grep*': 'allow',
-                    'rg *': 'allow',
-                    'grep *': 'allow',
-                    'git commit*': 'ask',
-                    'git push*': 'deny',
-                    'sudo *': 'deny',
-                    'ssh *': 'deny',
-                },
-            },
-        }
-    else:
-        with open(base_config_path) as f:
-            base_config = json.load(f)
+    try:
+        base_config = json.loads(
+            importlib.resources.read_text(
+                'llm_coding.assets.config',
+                'opencode.base.json',
+                encoding='utf-8',
+            )
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise RuntimeError(
+            "Required packaged resource 'config/opencode.base.json' is "
+            'missing; reinstall llm-coding'
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Packaged resource 'config/opencode.base.json' is invalid; "
+            'reinstall llm-coding'
+        ) from exc
+    if not isinstance(base_config, dict):
+        raise RuntimeError(
+            "Packaged resource 'config/opencode.base.json' must contain "
+            'a JSON object; reinstall llm-coding'
+        )
 
     # Modify base config with runtime values
     modified_config = base_config.copy()

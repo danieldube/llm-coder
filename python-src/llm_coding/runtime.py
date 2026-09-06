@@ -1,6 +1,7 @@
 """Runtime and systemd integration for the on-demand RunPod endpoint."""
 
 import fcntl
+import importlib.resources
 import json
 import os
 import shutil
@@ -132,17 +133,20 @@ def _render_systemd_units(config) -> dict[str, str]:
     }
 
 
-def _asset(*parts: str) -> Path:
-    """Locate an asset in an editable checkout or a wheel installation."""
-    relative = Path(*parts)
-    candidates = [
-        Path(__file__).parents[2] / relative,
-        Path(sys.prefix) / 'llm_coding/assets' / relative,
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise RuntimeError(f'Packaged asset is missing: {relative}')
+def _asset_text(*parts: str) -> str:
+    """Read an installation resource from the package."""
+    relative = '/'.join(parts)
+    if len(parts) != 2:
+        raise RuntimeError(f'Invalid packaged resource path: {relative!r}')
+    try:
+        return importlib.resources.read_text(
+            f'llm_coding.assets.{parts[0]}', parts[1], encoding='utf-8'
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise RuntimeError(
+            f'Required packaged resource {relative!r} is missing; '
+            'reinstall llm-coding'
+        ) from exc
 
 
 def _ensure_acp_registration(config) -> None:
@@ -205,7 +209,7 @@ def install() -> None:
         (manager.secrets_file, 'config/secrets.env.example'),
     ):
         if not destination.exists():
-            destination.write_text(_asset(template).read_text())
+            destination.write_text(_asset_text(template))
             destination.chmod(0o600)
     config = manager.load_config()
     key = Path(_value(config, 'RUNPOD_SSH_KEY'))
@@ -522,7 +526,7 @@ def up():
             time.sleep(5)
         else:
             raise RuntimeError('SSH did not become available before timeout')
-        script = _asset('remote/ensure-vllm.sh')
+        script = _asset_text('remote/ensure-vllm.sh')
         _set_activation_status(
             manager,
             'Preparing vLLM on RunPod (first start can take several minutes)',
@@ -544,7 +548,7 @@ def up():
                 config.get('REMOTE_VLLM_PORT', '8000'),
                 config.get('VLLM_START_TIMEOUT_SECONDS', '1800'),
             ],
-            input=script.read_text(),
+            input=script,
         )
         (manager.state_dir / 'runtime.env').write_text(
             f'SSH_HOST={host}\nSSH_PORT={port}\nSSH_KEY={key}\n'
@@ -716,6 +720,9 @@ def tunnel():
 
 def main():
     commands = {'up': up, 'down': down, 'tunnel': tunnel, 'install': install}
+    if len(sys.argv) == 2 and sys.argv[1] in {'-h', '--help'}:
+        print(f"Usage: {Path(sys.argv[0]).name} {{{', '.join(commands)}}}")
+        return
     if len(sys.argv) != 2 or sys.argv[1] not in commands:
         raise SystemExit(
             f"Usage: {Path(sys.argv[0]).name} {{{', '.join(commands)}}}"

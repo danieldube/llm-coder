@@ -30,19 +30,27 @@ dependencies = [
 ]
 
 [project.scripts]
-llm-up = "llm_coding.cli:main"
-llm-down = "llm_coding.cli:main"
-llm-status = "llm_coding.cli:main"
-llm-doctor = "llm_coding.cli:main"
-opencode-runpod = "llm_coding.cli:main"
-llm-install = "llm_coding.cli:main"
+llm-up = "llm_coding.cli:llm_up"
+llm-down = "llm_coding.cli:llm_down"
+llm-status = "llm_coding.cli:llm_status"
+llm-doctor = "llm_coding.cli:llm_doctor"
+opencode-runpod = "llm_coding.cli:opencode_runpod"
+llm-install = "llm_coding.cli:llm_install"
+llm-runtime = "llm_coding.runtime:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["python-src"]
 include = ["llm_coding*"]
 
-[tool.setuptools.package-dir]
-"" = "build/lib"
+[tool.setuptools]
+package-dir = {"" = "python-src"}
+
+[tool.setuptools.package-data]
+llm_coding = [
+    "assets/config/*.example",
+    "assets/config/*.json",
+    "assets/remote/*.sh",
+]
 
 [tool.ruff]
 line-length = 79
