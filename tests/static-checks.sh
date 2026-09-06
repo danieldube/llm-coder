@@ -55,7 +55,7 @@ mapfile -t installed_commands < <(
     }' "${ROOT}/pyproject.toml" | sort
 )
 mapfile -t documented_commands < <(
-    sed -n 's/^| `\([a-z][a-z0-9-]*\)` |.*/\1/p' \
+    sed -n "s/^| \`\\([a-z][a-z0-9-]*\\)\` |.*/\\1/p" \
         "${ROOT}/README.md" | sort
 )
 if [[ "${installed_commands[*]}" != "${documented_commands[*]}" ]]; then
