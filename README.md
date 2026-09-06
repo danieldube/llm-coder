@@ -80,6 +80,16 @@ stops the socket and proxy, but leaves socket enablement intact. Both retain
 configuration, Pod identity, and persistent storage. `llm-up` can reactivate
 an explicitly stopped installation.
 
+## Uninstallation
+
+Run `./uninstall.sh` from a checkout to remove the installed user-systemd
+units, console commands, runtime files, and IDE integration. The script uses
+the installed `llm-runtime remove-integration` command so configuration is
+parsed without executing it. It intentionally preserves configuration,
+credentials, the dedicated SSH key, remote storage, and the state directory at
+`${XDG_STATE_HOME:-$HOME/.local/state}/llm-coding`; delete those separately if
+they are no longer needed.
+
 `llm-down --remove-integration` prompts before shutdown and additionally
 removes generated OpenCode configuration and the configured ACP agent entry.
 It preserves credentials, units, other agents, and storage. It is not a full

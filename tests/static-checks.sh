@@ -40,6 +40,23 @@ if grep -R -n -E \
     exit 1
 fi
 
+config_source_pattern="(source|\\.)[[:space:]]+.*config\\.env"
+if grep -n -E "${config_source_pattern}" "${ROOT}/uninstall.sh"; then
+    echo 'uninstall.sh must not source configuration files.' >&2
+    exit 1
+fi
+
+removed_lifecycle_pattern="runtime-(up|down)\\.sh|socket-proxy\\.sh|/bin/tunnel\\.sh"
+while IFS= read -r asset; do
+    if [[ "${asset}" == "${ROOT}/tests/static-checks.sh" ]]; then
+        continue
+    fi
+    if grep -n -E "${removed_lifecycle_pattern}" "${asset}"; then
+        echo "Executable asset references a removed lifecycle script: ${asset}" >&2
+        exit 1
+    fi
+done < <(find_scripts)
+
 license_file="$({
     sed -n 's/^license-files = \["\([^"]*\)"\]/\1/p' \
         "${ROOT}/pyproject.toml"
@@ -54,6 +71,17 @@ mapfile -t installed_commands < <(
         s/^\([a-z][a-z0-9-]*\) = .*/\1/p
     }' "${ROOT}/pyproject.toml" | sort
 )
+mapfile -t uninstall_commands < <(
+    sed -n '/^ENTRY_POINTS=(/,/^)/ {
+        s/^[[:space:]]*\([a-z][a-z0-9-]*\)[[:space:]]*$/\1/p
+    }' "${ROOT}/uninstall.sh" | sort
+)
+if [[ "${installed_commands[*]}" != "${uninstall_commands[*]}" ]]; then
+    echo 'uninstall.sh entry-point list diverges from [project.scripts].' >&2
+    printf 'Installed: %s\nRemoved:   %s\n' \
+        "${installed_commands[*]}" "${uninstall_commands[*]}" >&2
+    exit 1
+fi
 mapfile -t documented_commands < <(
     sed -n "s/^| \`\\([a-z][a-z0-9-]*\\)\` |.*/\\1/p" \
         "${ROOT}/README.md" | sort

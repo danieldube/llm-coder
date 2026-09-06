@@ -4,6 +4,7 @@
 # ruff: noqa: PT009
 
 import json
+import os
 import stat
 import tempfile
 import unittest
@@ -19,7 +20,7 @@ from llm_coding.core import RunPodAPIError
 from llm_coding.opencode import create_config, ensure_acp_registration, launch
 from llm_coding.runpod import pod_create_body
 from llm_coding.ssh import command, is_host_key_mismatch, prepare_endpoint
-from llm_coding.state import FileStateStore
+from llm_coding.state import FileStateStore, atomic_write_private
 from llm_coding.systemd import render_units
 
 
@@ -138,7 +139,75 @@ class FocusedModuleTests(unittest.TestCase):
             path = Path(temporary) / 'runtime.pod-id'
             self.assertEqual(store.read_pod_id(), 'pod-1')
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-            self.assertFalse(path.with_suffix('.pod-id.tmp').exists())
+            self.assertEqual(list(path.parent.glob(f'.{path.name}.*.tmp')), [])
+
+    def test_private_atomic_write_cleans_up_after_write_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / 'state'
+            destination.write_text('previous\n')
+
+            with patch(
+                'llm_coding.state.os.write', side_effect=OSError('full')
+            ):
+                try:
+                    atomic_write_private(destination, 'replacement\n')
+                except OSError:
+                    pass
+                else:
+                    self.fail('Expected write failure')
+
+            self.assertEqual(destination.read_text(), 'previous\n')
+            self.assertEqual(
+                list(destination.parent.glob(f'.{destination.name}.*.tmp')),
+                [],
+            )
+
+    def test_private_atomic_write_cleans_up_after_replace_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / 'state'
+            destination.write_text('previous\n')
+
+            with patch(
+                'llm_coding.state.os.replace',
+                side_effect=OSError('replace failed'),
+            ):
+                try:
+                    atomic_write_private(destination, 'replacement\n')
+                except OSError:
+                    pass
+                else:
+                    self.fail('Expected replace failure')
+
+            self.assertEqual(destination.read_text(), 'previous\n')
+            self.assertEqual(
+                list(destination.parent.glob(f'.{destination.name}.*.tmp')),
+                [],
+            )
+
+    def test_private_atomic_write_uses_unique_temporary_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / 'state'
+            sources: list[Path] = []
+            replace = os.replace
+
+            def record_replace(source: Path, target: Path) -> None:
+                sources.append(Path(source))
+                replace(source, target)
+
+            with patch(
+                'llm_coding.state.os.replace', side_effect=record_replace
+            ):
+                atomic_write_private(destination, 'first\n')
+                atomic_write_private(destination, 'second\n')
+
+            self.assertEqual(len(set(sources)), 2)
+            self.assertTrue(
+                all(path.parent == destination.parent for path in sources)
+            )
+            self.assertEqual(destination.read_text(), 'second\n')
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
 
     def test_ssh_uses_private_known_hosts_and_accept_new(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -159,6 +228,12 @@ class FocusedModuleTests(unittest.TestCase):
             )
             self.assertEqual(
                 state, {'pod_id': 'pod-1', 'host': 'host-a', 'port': 22022}
+            )
+            self.assertEqual(
+                stat.S_IMODE(
+                    (root / 'runtime.ssh-endpoint.json').stat().st_mode
+                ),
+                0o600,
             )
             self.assertEqual(
                 stat.S_IMODE((root / 'known_hosts').stat().st_mode), 0o600

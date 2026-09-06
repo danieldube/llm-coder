@@ -3,6 +3,7 @@
 import errno
 import fcntl
 import os
+import tempfile
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -14,6 +15,61 @@ ACTIVATION_STATUS_FILE = 'runtime.activation-status'
 LIFECYCLE_LOCK_FILE = 'runtime.lock'
 LIFECYCLE_LOCK_RETRY_SECONDS = 0.1
 _KNOWN_OPERATIONS = frozenset({'install', 'shutdown', 'startup', 'uninstall'})
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Synchronize directory metadata when the platform supports doing so."""
+    flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0)
+    try:
+        descriptor = os.open(directory, flags)
+    except OSError as exc:
+        if exc.errno in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            return
+        raise
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError as exc:
+            if exc.errno not in {
+                errno.EINVAL,
+                errno.ENOTSUP,
+                errno.EOPNOTSUPP,
+            }:
+                raise
+    finally:
+        os.close(descriptor)
+
+
+def atomic_write_private(destination: Path, content: str) -> None:
+    """Atomically replace a file with durable, owner-only UTF-8 content."""
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f'.{destination.name}.',
+        suffix='.tmp',
+        dir=destination.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        data = content.encode('utf-8')
+        offset = 0
+        while offset < len(data):
+            written = os.write(descriptor, data[offset:])
+            if written == 0:
+                raise OSError(errno.EIO, 'write returned no data')
+            offset += written
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary, destination)
+        _fsync_directory(destination.parent)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 @contextmanager
@@ -109,19 +165,9 @@ class FileStateStore:
 
     def write_pod_id(self, pod_id: str) -> None:
         path = self.directory / POD_STATE_FILE
-        temporary = path.with_name(path.name + '.tmp')
         try:
-            descriptor = os.open(
-                temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
-            )
-            with os.fdopen(descriptor, 'w') as output:
-                output.write(pod_id + '\n')
-                output.flush()
-                os.fsync(output.fileno())
-            temporary.replace(path)
-            path.chmod(0o600)
+            atomic_write_private(path, pod_id + '\n')
         except OSError as exc:
-            temporary.unlink(missing_ok=True)
             raise RuntimeError(
                 f'Cannot persist selected RunPod ID at {path}'
             ) from exc
@@ -141,15 +187,13 @@ class FileStateStore:
     def set_activation_status(self, message: str) -> None:
         try:
             path = self.directory / ACTIVATION_STATUS_FILE
-            path.write_text(message.strip() + '\n')
-            path.chmod(0o600)
+            atomic_write_private(path, message.strip() + '\n')
         except OSError:
             pass
 
     def record_activation_failure(self, message: str) -> None:
         try:
             path = self.directory / ACTIVATION_FAILURE_FILE
-            path.write_text(message.strip() + '\n')
-            path.chmod(0o600)
+            atomic_write_private(path, message.strip() + '\n')
         except OSError:
             pass

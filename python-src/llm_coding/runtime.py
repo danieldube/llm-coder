@@ -23,7 +23,12 @@ from .opencode import (
     ensure_installed,
     remove_acp_registration,
 )
-from .runpod import RunPodAPIError, RunPodClient, pod_create_body
+from .runpod import (
+    RunPodAPIError,
+    RunPodClient,
+    RunPodEndpoint,
+    pod_create_body,
+)
 from .ssh import command as ssh_command
 from .ssh import exec_tunnel, is_host_key_mismatch, prepare_endpoint
 from .state import (
@@ -40,6 +45,7 @@ from .systemd import install as systemd_install
 class PodProvider(Protocol):
     def find_pod_by_name(self, name: str) -> dict[str, Any] | None: ...
     def get_pod(self, pod_id: str) -> dict[str, Any]: ...
+    def get_pod_endpoint(self, pod_id: str) -> RunPodEndpoint | None: ...
     def create_pod(self, pod_config: dict[str, Any]) -> str: ...
     def start_pod(self, pod_id: str) -> None: ...
     def stop_pod(self, pod_id: str) -> None: ...
@@ -254,10 +260,9 @@ def up(
         port: int | None = None
         state.set_activation_status('Waiting for RunPod to expose SSH')
         while deps.monotonic() < deadline:
-            pod = client.get_pod(pod_id)
-            host = pod.get('publicIp')
-            port = pod.get('portMappings', {}).get('22')
-            if host and port:
+            pod_endpoint = client.get_pod_endpoint(pod_id)
+            if pod_endpoint is not None:
+                host, port = pod_endpoint.host, pod_endpoint.port
                 break
             deps.sleep(5)
         if not host or not port:
@@ -281,15 +286,12 @@ def up(
                     'SSH host key mismatch at unchanged endpoint '
                     f'[{host}]:{port}; refusing automatic recovery'
                 )
-            refreshed = client.get_pod(pod_id)
-            if str(refreshed.get('id')) != pod_id:
-                raise RuntimeError(
-                    'RunPod returned a different pod identity while '
-                    'verifying an SSH endpoint change'
-                )
-            new_host = refreshed.get('publicIp')
-            new_port = refreshed.get('portMappings', {}).get('22')
-            if new_host and new_port and (new_host, new_port) != (host, port):
+            pod_endpoint = client.get_pod_endpoint(pod_id)
+            if pod_endpoint is not None and (
+                pod_endpoint.host,
+                pod_endpoint.port,
+            ) != (host, port):
+                new_host, new_port = pod_endpoint.host, pod_endpoint.port
                 prepare_endpoint(
                     manager.state_dir,
                     pod_id,
@@ -298,7 +300,7 @@ def up(
                     deps.run,
                     state.set_activation_status,
                 )
-                host, port = str(new_host), int(new_port)
+                host, port = new_host, new_port
                 ssh = ssh_command(config, manager.state_dir, host, port)
             deps.sleep(5)
         else:

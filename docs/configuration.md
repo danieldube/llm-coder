@@ -131,22 +131,22 @@ removal does not restore earlier MCP defaults.
 and the currently configured ACP agent entry after shutdown. It leaves socket
 enablement and installed units intact; a later activation can register again.
 
-For complete local removal, first complete that command successfully, then
-disable the socket, remove the three generated unit files listed in
-[systemd documentation](../systemd/README.md), and reload the user manager:
+For complete local removal from a checkout, run `./uninstall.sh`. It stops the
+proxy, asks the installed `llm-runtime` to remove the configured ACP entry,
+disables the socket, removes generated unit files and every console entry
+point, clears the installation directory, and reloads the user manager. It
+does not source configuration files.
+
+The script deliberately preserves configuration, state, SSH keys, OpenCode,
+and RunPod storage. Remove the Python package separately if it was installed
+into a virtual environment:
 
 ```bash
-systemctl --user disable --now llm-coding.socket
-llm_units_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-rm -f "$llm_units_dir/llm-coding.socket" \
-  "$llm_units_dir/llm-coding-proxy.service" \
-  "$llm_units_dir/llm-coding-tunnel.service"
-systemctl --user daemon-reload
+./uninstall.sh
 .venv/bin/python -m pip uninstall llm-coding
 ```
 
 Keep the package installed until shutdown has finished, because unit stop hooks
 invoke `llm-runtime`. Configuration, state, SSH keys, the OpenCode binary, and
 remote storage require separate removal decisions. Verify Pod state in RunPod
-if shutdown reports errors. `uninstall.sh` is a legacy shell-installation
-cleanup script and is not a complete uninstaller for the Python package.
+if shutdown reports errors.

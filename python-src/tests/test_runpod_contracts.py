@@ -102,6 +102,69 @@ class TestRunPodContracts(unittest.TestCase):
                 with self.assertRaises(RunPodProtocolError):
                     method()
 
+    def test_ssh_endpoint_rejects_malformed_port_mappings(self) -> None:
+        malformed: tuple[object, ...] = (
+            None,
+            [],
+            '22',
+            {},
+            {'22': None},
+            {'22': []},
+            {'22': '22022'},
+            {'22': True},
+        )
+        for mappings in malformed:
+            pod: dict[str, object] = {
+                **_pod(),
+                'publicIp': '203.0.113.1',
+            }
+            if mappings != {}:
+                pod['portMappings'] = mappings
+            with (
+                self.subTest(port_mappings=mappings),
+                patch(
+                    'llm_coding.runpod.requests.request',
+                    return_value=self._response(pod),
+                ),
+                self.assertRaises(RunPodProtocolError),
+            ):
+                RunPodClient('key').get_pod_endpoint('pod-1')
+
+    def test_ssh_endpoint_requires_a_non_empty_string_host(self) -> None:
+        invalid_hosts: tuple[object, ...] = (None, '', [], True)
+        for host in invalid_hosts:
+            pod: dict[str, object] = {
+                **_pod(),
+                'publicIp': host,
+                'portMappings': {'22': 22022},
+            }
+            with (
+                self.subTest(host=host),
+                patch(
+                    'llm_coding.runpod.requests.request',
+                    return_value=self._response(pod),
+                ),
+                self.assertRaises(RunPodProtocolError),
+            ):
+                RunPodClient('key').get_pod_endpoint('pod-1')
+
+    def test_ssh_endpoint_rejects_out_of_range_ports(self) -> None:
+        for port in (0, 65536, -1):
+            pod: dict[str, object] = {
+                **_pod(),
+                'publicIp': '203.0.113.1',
+                'portMappings': {'22': port},
+            }
+            with (
+                self.subTest(port=port),
+                patch(
+                    'llm_coding.runpod.requests.request',
+                    return_value=self._response(pod),
+                ),
+                self.assertRaises(RunPodProtocolError),
+            ):
+                RunPodClient('key').get_pod_endpoint('pod-1')
+
 
 class TestPersistedPodIdentity(unittest.TestCase):
     def setUp(self) -> None:
@@ -136,14 +199,18 @@ class TestPersistedPodIdentity(unittest.TestCase):
         self.assertFalse((self.manager.state_dir / 'runtime.pod-id').exists())
 
     def test_failed_atomic_write_removes_temporary_state(self) -> None:
-        temporary = self.manager.state_dir / 'runtime.pod-id.tmp'
         with (
-            patch.object(Path, 'replace', side_effect=OSError('disk error')),
+            patch(
+                'llm_coding.state.os.replace',
+                side_effect=OSError('disk error'),
+            ),
             self.assertRaisesRegex(RuntimeError, 'Cannot persist'),
         ):
             runtime._write_pod_id(self.manager, 'pod-1')
 
-        self.assertFalse(temporary.exists())
+        self.assertEqual(
+            list(self.manager.state_dir.glob('.runtime.pod-id.*.tmp')), []
+        )
 
     def test_api_or_protocol_failure_does_not_fall_back_to_name(self) -> None:
         runtime._write_pod_id(self.manager, 'pod-1')
