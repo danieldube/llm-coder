@@ -22,8 +22,9 @@ from .core import (
     create_opencode_config,
     fatal,
 )
-from .runtime import _startup_timeout_seconds, ensure_socket
+from .runtime import _asset_text, _startup_timeout_seconds, ensure_socket
 from .runtime import down as runtime_down
+from .runtime import install as runtime_install
 
 logger = logging.getLogger(__name__)
 
@@ -164,16 +165,7 @@ def ensure_vllm_on_remote(
             config.get('VLLM_START_TIMEOUT_SECONDS', '1800'),
         ]
 
-        # Get the ensure-vllm.sh script content from the original location
-        ensure_vllm_script = (
-            Path(__file__).parent.parent / 'remote' / 'ensure-vllm.sh'
-        )
-        if not ensure_vllm_script.exists():
-            # Fallback to embedded content or just copy what we need
-            logger.warning(
-                'ensure-vllm.sh not found, using minimal implementation'
-            )
-            return True
+        script_content = _asset_text('remote/ensure-vllm.sh')
 
         # Create SSH command to run ensure-vllm.sh remotely
         cmd = [
@@ -190,13 +182,15 @@ def ensure_vllm_on_remote(
             'bash -s --',
         ] + params
 
-        # Read the script content
-        with open(ensure_vllm_script) as f:
-            script_content = f.read()
-
         # Execute the script remotely
         logger.info(f'Running vLLM setup on remote host {host}')
-        result = run_command(cmd, capture_output=True, check=False)
+        result = subprocess.run(
+            cmd,
+            input=script_content,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if result.returncode != 0:
             logger.error(f'Remote vLLM setup failed: {result.stderr}')
             return False
@@ -426,6 +420,15 @@ def _shutdown_summary_items():
 @click.group()
 def cli() -> None:
     """Commands for managing the llm-coding runtime."""
+
+
+@cli.command()
+def llm_install() -> None:
+    """Install configuration and user-level systemd integration."""
+    try:
+        runtime_install()
+    except (OSError, RuntimeError, requests.RequestException) as exc:
+        raise click.ClickException(str(exc)) from None
 
 
 @cli.command()
