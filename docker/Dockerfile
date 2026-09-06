@@ -4,18 +4,22 @@ FROM runpod/pytorch:1.1.0-cu1290-torch291-ubuntu2404
 
 ARG VLLM_VERSION=0.28.0
 ARG VLLM_CUDA_VERSION=129
+ARG PYTHON_VERSION=3.11
 ARG TARGETARCH
 
 ENV VLLM_VENV=/opt/llm-coding/vllm \
     UV_CACHE_DIR=/opt/llm-coding/uv-cache
 
+# Install the project's minimum Python explicitly rather than inheriting a
+# potentially changing interpreter from the upstream runtime image.
 RUN case "${TARGETARCH:-amd64}" in \
         amd64) vllm_arch=x86_64 ;; \
         arm64) vllm_arch=aarch64 ;; \
         *) echo "Unsupported target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && mkdir -p "${UV_CACHE_DIR}" \
-    && uv venv "${VLLM_VENV}" --python python3 --seed \
+    && uv python install "${PYTHON_VERSION}" \
+    && uv venv "${VLLM_VENV}" --python "${PYTHON_VERSION}" --seed \
     && uv pip install --python "${VLLM_VENV}/bin/python" \
         "https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}%2Bcu${VLLM_CUDA_VERSION}-cp38-abi3-manylinux_2_28_${vllm_arch}.whl" \
         --extra-index-url "https://download.pytorch.org/whl/cu${VLLM_CUDA_VERSION}" \

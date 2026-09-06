@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import venv
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 
 
@@ -41,6 +42,15 @@ class WheelPackagingTests(unittest.TestCase):
             }
             with zipfile.ZipFile(wheel) as archive:
                 assert required_assets.issubset(archive.namelist())
+                metadata_name = next(
+                    name
+                    for name in archive.namelist()
+                    if name.endswith('.dist-info/METADATA')
+                )
+                metadata = BytesParser().parsebytes(
+                    archive.read(metadata_name)
+                )
+                self.assertEqual(metadata['Requires-Python'], '>=3.11')
 
             environment = root / 'environment'
             venv.EnvBuilder(with_pip=True).create(environment)
