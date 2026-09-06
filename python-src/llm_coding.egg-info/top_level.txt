@@ -1,5 +1,0 @@
-bin
-config
-llm_coding
-remote
-tests

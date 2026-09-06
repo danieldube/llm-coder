@@ -1,8 +1,0 @@
-[console_scripts]
-llm-doctor = llm_coding.cli:llm_doctor
-llm-down = llm_coding.cli:llm_down
-llm-install = llm_coding.runtime:install
-llm-runtime = llm_coding.runtime:main
-llm-status = llm_coding.cli:llm_status
-llm-up = llm_coding.cli:llm_up
-opencode-runpod = llm_coding.cli:opencode_runpod

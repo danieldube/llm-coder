@@ -1,14 +1,13 @@
-# llm-coding-python
+# llm-coding
 
-Python implementation of the llm-coding project that provides the same functionality as the original bash-based version.
+Local coding-agent runtime backed by a RunPod-hosted vLLM service.
 
 ## Features
 
-- Full compatibility with the original bash scripts
-- Same configuration and behavior
-- Python-based implementation for better maintainability
-- Unit testing support
-- Uses uv for dependency management
+- Python console scripts manage installation, activation, status, and shutdown.
+- A stable localhost endpoint uses user-systemd socket activation.
+- Pod identity and SSH endpoint state are persisted privately between runs.
+- vLLM stays bound to the Pod's loopback interface and is reached by SSH.
 
 ## Installation
 
@@ -32,8 +31,7 @@ Create a virtual environment with a supported interpreter before installing:
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 
-# The first `llm-up` creates and enables the required user systemd socket.
-# To provision it explicitly instead, run:
+# Install the generated user-systemd units and local integration.
 .venv/bin/llm-install
 
 # Or using uv
@@ -43,16 +41,23 @@ uv pip install --python .venv/bin/python -e .
 
 ## Usage
 
-```bash
-# Run the commands (same as original bash scripts)
-llm-up
-llm-down
-# Stop and also remove this project's durable IDE integration (prompts):
-llm-down --remove-integration
-llm-status
-llm-doctor
-opencode-runpod
-```
+The installed command names are:
+
+| Command | Purpose |
+| --- | --- |
+| `llm-install` | Generate and enable the user-systemd socket and integration. |
+| `llm-up` | Install if needed and activate the runtime. |
+| `llm-down` | Stop the socket, proxy, tunnel, and selected Pod for this session. |
+| `llm-status` | Inspect systemd, the persisted Pod ID, and provider state. |
+| `llm-doctor` | Validate configuration and dependencies (`--activate` also starts the runtime). |
+| `llm-runtime` | Internal systemd lifecycle entry point. |
+| `opencode-runpod` | Start OpenCode after prewarming the local endpoint. |
+
+Ordinary and idle shutdowns are transient: they retain the generated
+integration, installation configuration, remote storage, and reusable Pod ID.
+Use `llm-down --remove-integration` to remove the generated OpenCode file and
+this installation's named JetBrains ACP entry as well. Credentials, Pod state,
+remote storage, and unrelated ACP entries are never removed by that option.
 
 ## Runtime image
 
@@ -71,6 +76,6 @@ configuration file.
 # Run tests
 make test
 
-# Install dependencies
+# Install development-only tools (runtime dependencies come from pyproject.toml)
 .venv/bin/python -m pip install -r requirements.txt
 ```
