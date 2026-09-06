@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import requests
@@ -31,7 +32,7 @@ class TestRunPodContracts(unittest.TestCase):
 
     def test_get_pods_accepts_direct_list_and_empty_list(self) -> None:
         with patch(
-            'llm_coding.core.requests.request',
+            'llm_coding.runpod.requests.request',
             side_effect=[self._response([_pod()]), self._response([])],
         ):
             client = RunPodClient('key')
@@ -40,7 +41,7 @@ class TestRunPodContracts(unittest.TestCase):
 
     def test_get_pods_supports_only_explicit_legacy_envelope(self) -> None:
         with patch(
-            'llm_coding.core.requests.request',
+            'llm_coding.runpod.requests.request',
             return_value=self._response({'data': [_pod()]}),
         ):
             self.assertEqual(RunPodClient('key').get_pods(), [_pod()])
@@ -54,7 +55,7 @@ class TestRunPodContracts(unittest.TestCase):
             with (
                 self.subTest(payload=payload),
                 patch(
-                    'llm_coding.core.requests.request',
+                    'llm_coding.runpod.requests.request',
                     return_value=self._response(payload),
                 ),
             ):
@@ -64,7 +65,9 @@ class TestRunPodContracts(unittest.TestCase):
     def test_invalid_json_is_not_translated_to_an_empty_result(self) -> None:
         response = self._response(None)
         response.json.side_effect = ValueError('bad JSON')
-        with patch('llm_coding.core.requests.request', return_value=response):
+        with patch(
+            'llm_coding.runpod.requests.request', return_value=response
+        ):
             with self.assertRaisesRegex(RunPodProtocolError, 'invalid JSON'):
                 RunPodClient('key').get_pods()
 
@@ -73,7 +76,9 @@ class TestRunPodContracts(unittest.TestCase):
         response.status_code = 503
         response.text = 'unavailable'
         response.raise_for_status.side_effect = requests.HTTPError('503')
-        with patch('llm_coding.core.requests.request', return_value=response):
+        with patch(
+            'llm_coding.runpod.requests.request', return_value=response
+        ):
             with self.assertRaises(RunPodAPIError) as raised:
                 RunPodClient('key').get_pods()
         self.assertEqual(raised.exception.status_code, 503)
@@ -90,7 +95,7 @@ class TestRunPodContracts(unittest.TestCase):
             with (
                 self.subTest(method=method),
                 patch(
-                    'llm_coding.core.requests.request',
+                    'llm_coding.runpod.requests.request',
                     return_value=self._response(payload),
                 ),
             ):
@@ -168,10 +173,9 @@ class TestPersistedPodIdentity(unittest.TestCase):
 
     def test_down_stops_persisted_pod_and_retains_identity(self) -> None:
         runtime._write_pod_id(self.manager, 'pod-1')
-        self.manager.load_config.return_value = {
-            'RUNPOD_API_KEY': 'key',
-            'RUNPOD_POD_NAME': 'model',
-        }
+        self.manager.load_settings.return_value = SimpleNamespace(
+            runpod_api_key='key', runpod_pod_name='model'
+        )
         client = MagicMock()
         client.get_pod.return_value = _pod()
         systemctl = MagicMock()
@@ -179,13 +183,17 @@ class TestPersistedPodIdentity(unittest.TestCase):
         with (
             patch.object(runtime, 'ConfigManager', return_value=self.manager),
             patch.object(runtime, 'RunPodClient', return_value=client),
-            patch.object(runtime, '_systemctl', systemctl),
             patch(
                 'llm_coding.runtime.Path.home',
                 return_value=self.manager.state_dir / 'home',
             ),
         ):
-            runtime.down()  # type: ignore[no-untyped-call]
+            runtime.down(
+                runtime.RuntimeDependencies(
+                    systemd=SimpleNamespace(run=systemctl)
+                ),
+                provider=client,
+            )
         client.get_pod.assert_called_once_with('pod-1')
         client.find_pod_by_name.assert_not_called()
         client.stop_pod.assert_called_once_with('pod-1')

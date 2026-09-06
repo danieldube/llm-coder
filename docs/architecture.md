@@ -83,3 +83,20 @@ a RunPod registry credential with a dedicated read-only `read:packages` token
 and set its opaque credential ID in `RUNPOD_CONTAINER_REGISTRY_AUTH_ID`. The
 token is stored by RunPod and is never written to local configuration or passed
 into the Pod.
+
+## Python module boundaries
+
+The local controller keeps side effects behind focused modules:
+
+- `config.py` owns immutable `Settings`, validation, and XDG paths.
+- `runpod.py` owns typed provider transport and response contracts.
+- `systemd.py` owns unit rendering and user `systemctl` calls.
+- `ssh.py` owns transient-host authentication and tunnel commands.
+- `opencode.py` owns installation, generated configuration, and ACP state.
+- `state.py` atomically persists private pod identity and activation status.
+- `runtime.py` composes those services into lifecycle operations, while
+  `cli.py` presents Click commands and output.
+
+Runtime orchestration accepts explicit command, monotonic-clock, sleep, systemd,
+and provider dependencies. Tests can therefore supply deterministic fakes
+without replacing module globals or contacting RunPod, SSH, or systemd.

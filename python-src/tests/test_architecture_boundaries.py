@@ -1,4 +1,4 @@
-"""Static contracts for the CLI/runtime responsibility boundary."""
+"""Static contracts for focused module responsibility boundaries."""
 
 # ruff: noqa: PT009
 
@@ -7,84 +7,56 @@ import sys
 import unittest
 from pathlib import Path
 
-# Support direct unittest discovery without requiring an editable install.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm_coding import cli, core, runtime
+from llm_coding import cli, core, opencode, runpod, runtime, ssh, systemd
 
 
 def _source(module: object) -> str:
-    path = Path(module.__file__)  # type: ignore[attr-defined]
-    return path.read_text()
+    return Path(module.__file__).read_text()  # type: ignore[attr-defined]
 
 
-def _definitions(source: str) -> set[str]:
+def _definitions(module: object) -> set[str]:
     return {
         node.name
-        for node in ast.walk(ast.parse(source))
+        for node in ast.walk(ast.parse(_source(module)))
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
 
 class TestArchitectureBoundaries(unittest.TestCase):
-    """Prevent operational implementations from drifting back into the CLI."""
-
-    def test_obsolete_cli_service_symbols_are_not_public_imports(self) -> None:
-        obsolete = {
-            'acquire_lock',
-            'release_lock',
-            'create_pod_config',
-            'wait_for_ssh_connection',
-            'ensure_vllm_on_remote',
-            'find_pod_by_name',
-            'runpod_api',
-        }
-        self.assertTrue(obsolete.isdisjoint(vars(cli)))
-
-    def test_cli_commands_delegate_to_runtime_services(self) -> None:
+    def test_cli_is_presentation_only(self) -> None:
         source = _source(cli)
-        for service in (
-            'ensure_socket',
-            'runtime_down',
-            'runtime_install',
-            'runtime_remove_integration',
-        ):
-            with self.subTest(service=service):
-                self.assertIn(f'{service}(', source)
+        self.assertNotIn('fcntl.flock', source)
+        self.assertNotIn('StrictHostKeyChecking=', source)
+        self.assertNotIn("'gpuTypePriority':", source)
+        for service in ('ensure_socket', 'runtime_down', 'runtime_install'):
+            self.assertIn(f'{service}(', source)
 
-    def test_operational_implementations_have_one_owner(self) -> None:
-        cli_source = _source(cli)
-        core_source = _source(core)
-        runtime_source = _source(runtime)
+    def test_operational_implementations_have_focused_owners(self) -> None:
+        self.assertIn("'gpuTypePriority':", _source(runpod))
+        self.assertIn('StrictHostKeyChecking=', _source(ssh))
+        self.assertIn('def render_units(', _source(systemd))
+        self.assertIn('def ensure_acp_registration(', _source(opencode))
+        self.assertNotIn("'gpuTypePriority':", _source(runtime))
+        self.assertNotIn('StrictHostKeyChecking=', _source(runtime))
 
-        self.assertNotIn('fcntl.flock', cli_source)
-        self.assertEqual(runtime_source.count('fcntl.flock'), 1)
-        self.assertNotIn('StrictHostKeyChecking=', cli_source)
-        self.assertEqual(runtime_source.count('StrictHostKeyChecking='), 1)
-        self.assertNotIn("'gpuTypePriority':", cli_source)
-        self.assertEqual(runtime_source.count("'gpuTypePriority':"), 1)
+    def test_core_is_only_a_compatibility_facade(self) -> None:
+        self.assertTrue(
+            {'RunPodClient', 'create_opencode_config'}.isdisjoint(
+                _definitions(core)
+            )
+        )
 
-        owners = [
-            source
-            for source in (cli_source, core_source, runtime_source)
-            if 'def find_pod_by_name(' in source
-        ]
-        self.assertEqual(owners, [core_source])
-
-    def test_cli_definitions_are_not_runtime_primitives(self) -> None:
+    def test_runtime_is_orchestration_only(self) -> None:
         forbidden = {
-            'acquire_lock',
-            'release_lock',
-            'create_pod_config',
-            'wait_for_ssh_connection',
-            'ensure_vllm_on_remote',
-            'find_pod_by_name',
-            'runpod_api',
-            '_pod_create_body',
-            '_ssh_base',
-            '_lifecycle_lock',
+            'render_units',
+            'pod_create_body',
+            'command',
+            'create_config',
         }
-        self.assertTrue(forbidden.isdisjoint(_definitions(_source(cli))))
+        self.assertTrue(forbidden.isdisjoint(_definitions(runtime)))
+        self.assertIn('class RuntimeDependencies', _source(runtime))
 
 
 if __name__ == '__main__':
