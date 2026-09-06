@@ -6,21 +6,57 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from subprocess import CompletedProcess
+from unittest.mock import MagicMock
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from llm_coding.cli import get_systemd_service_info
+from llm_coding.systemd import UnitState, inspect_unit
 
 
-class TestFixedBareExceptClauses(unittest.TestCase):
-    def test_get_systemd_service_info_handles_exceptions(self) -> None:
-        """Unavailable systemd state has one stable empty-value contract."""
-        with patch('llm_coding.cli.run_command') as mock_run:
-            mock_run.side_effect = Exception('Simulated subprocess error')
-            result = get_systemd_service_info('nonexistent.service')
-            self.assertEqual(result, ('', ''))
+class TestSystemdStatus(unittest.TestCase):
+    def test_documented_states_are_read_from_show_properties(self) -> None:
+        for value in ('active', 'activating', 'inactive', 'failed'):
+            with self.subTest(value=value):
+                controller = MagicMock()
+                controller.run.return_value = CompletedProcess(
+                    [],
+                    0,
+                    f'LoadState=loaded\nActiveState={value}\n'
+                    'SubState=running\nInvocationID=abc\n',
+                    '',
+                )
+                result = inspect_unit('example.service', controller)
+                self.assertEqual(result.state, UnitState(value))
+                controller.run.assert_called_once_with(
+                    'show',
+                    '--property=LoadState',
+                    '--property=ActiveState',
+                    '--property=SubState',
+                    '--property=InvocationID',
+                    'example.service',
+                    check=False,
+                )
+
+    def test_missing_unit_is_not_a_command_failure(self) -> None:
+        controller = MagicMock()
+        controller.run.return_value = CompletedProcess(
+            [], 1, 'LoadState=not-found\nActiveState=inactive\n', ''
+        )
+        self.assertEqual(
+            inspect_unit('missing.service', controller).state,
+            UnitState.NOT_FOUND,
+        )
+
+    def test_unavailable_user_systemd_is_inspection_failure(self) -> None:
+        controller = MagicMock()
+        controller.run.return_value = CompletedProcess(
+            [], 1, '', 'Failed to connect to bus: No medium found'
+        )
+        result = inspect_unit('example.service', controller)
+        self.assertEqual(result.state, UnitState.INSPECTION_FAILED)
+        self.assertIn('connect to bus', result.detail)
 
 
 if __name__ == '__main__':

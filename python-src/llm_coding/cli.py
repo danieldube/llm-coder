@@ -17,7 +17,6 @@ import requests
 from .config import Settings
 from .core import (
     ConfigManager,
-    RunPodClient,
     check_dependencies,
     create_opencode_config,
     fatal,
@@ -27,6 +26,8 @@ from .runtime import _startup_timeout_seconds, ensure_socket
 from .runtime import down as runtime_down
 from .runtime import install as runtime_install
 from .runtime import remove_integration as runtime_remove_integration
+from .status import ProviderState, inspect_provider, inspect_runtime
+from .systemd import inspect_unit
 
 logger = logging.getLogger(__name__)
 
@@ -55,34 +56,10 @@ def run_command(
         return e
 
 
-def get_systemd_service_info(service_name: str) -> tuple:
+def get_systemd_service_info(service_name: str) -> tuple[str, str]:
     """Get systemd service state and invocation ID"""
-    try:
-        # Get active state and invocation ID
-        result = run_command(
-            [
-                'systemctl',
-                '--user',
-                'show',
-                '--property=ActiveState',
-                '--property=InvocationID',
-                '--value',
-                service_name,
-            ],
-            capture_output=True,
-        )
-
-        lines = result.stdout.strip().split('\n')
-        active_state = lines[0] if len(lines) > 0 else ''
-        invocation_id = lines[1] if len(lines) > 1 else ''
-
-        return active_state, invocation_id
-    except Exception:
-        logger.debug(
-            f'Failed to get systemd service info for {service_name}',
-            exc_info=True,
-        )
-        return '', ''
+    status = inspect_unit(service_name)
+    return status.state.value, status.invocation_id
 
 
 def print_activation_failure(state_dir: Path) -> bool:
@@ -157,18 +134,19 @@ def print_runtime_ready_summary(
         )
 
     pod_summary = 'API status unavailable'
-    try:
-        pod = RunPodClient(config.runpod_api_key).find_pod_by_name(
-            config.runpod_pod_name
-        )
-        if pod:
-            pod_summary = f'{pod.get("name")} ({pod.get("desiredStatus", "unknown")}, id {pod.get("id", "unknown")})'
-        else:
-            pod_summary = f'{config.runpod_pod_name} (not returned by API)'
-    except Exception as exc:
+    pod = inspect_provider(config, state_dir)
+    if pod.state is ProviderState.AVAILABLE:
+        pod_summary = f'{pod.lifecycle} (id {pod.pod_id})'
+    elif pod.state in {
+        ProviderState.API_UNAVAILABLE,
+        ProviderState.PROTOCOL_FAILURE,
+    }:
         logger.warning(
-            'Could not confirm RunPod pod status after activation: %s', exc
+            'Could not confirm RunPod pod status after activation: %s',
+            pod.detail,
         )
+    else:
+        pod_summary = pod.state.value
 
     opencode_config = create_opencode_config(config, state_dir)
     acp_state = 'not registered'
@@ -225,11 +203,12 @@ def _shutdown_summary_items(include_integration: bool = False):
                 agent = config.jetbrains_agent_name
                 if agent in acp.get('agent_servers', {}):
                     removed.append('CLion ACP entry')
-        if config.runpod_api_key and config.runpod_pod_name:
-            pod = RunPodClient(config.runpod_api_key).find_pod_by_name(
-                config.runpod_pod_name
-            )
-            if pod and pod.get('desiredStatus') == 'RUNNING':
+        if config.runpod_api_key:
+            pod = inspect_provider(config, manager.state_dir)
+            if (
+                pod.state is ProviderState.AVAILABLE
+                and pod.lifecycle == 'RUNNING'
+            ):
                 stopped.append('RunPod pod')
     except (
         OSError,
@@ -508,73 +487,37 @@ def llm_down(remove_integration: bool = False) -> None:
 
 
 @cli.command()
-def llm_status():
+def llm_status() -> None:
     """Show LLM runtime status"""
     logger.info('Checking LLM runtime status...')
-
-    # Check systemd services
-    services = [
-        ('llm-coding.socket', 'Socket'),
-        ('llm-coding-proxy.service', 'Proxy'),
-        ('llm-coding-tunnel.service', 'Tunnel'),
-    ]
-
-    for service, label in services:
-        try:
-            result = run_command(
-                ['systemctl', '--user', 'is-active', service],
-                capture_output=True,
-            )
-            status = result.stdout.strip()
-            if not status:
-                status = 'inactive'
-            print(f'{label:<12} {status}')
-        except Exception:
-            logger.debug(
-                f'Failed to check systemd service {service}', exc_info=True
-            )
-            print(f'{label:<12} unknown')
-
-    # Check RunPod status
     try:
-        config_manager = ConfigManager()
-        config = config_manager.load_settings()
-        runpod_client = RunPodClient(config.runpod_api_key)
-        pod = runpod_client.find_pod_by_name(config.runpod_pod_name)
+        manager = ConfigManager()
+        result = inspect_runtime(manager.load_settings(), manager.state_dir)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(
+            f'Status inspection failed: {exc}'
+        ) from None
 
-        if pod:
-            status = pod.get('desiredStatus', 'unknown')
-            pod_id = pod.get('id', 'unknown')
-            gpu = pod.get('gpu', {}).get('displayName') or pod.get(
-                'gpu', {}
-            ).get('id', 'unknown')
-            print(f'{"RunPod":<12} {status}')
-            print(f'{"Pod ID":<12} {pod_id}')
-            print(f'{"GPU":<12} {gpu}')
-        else:
-            print(f'{"RunPod":<12} not created')
-    except Exception as e:
-        logger.error(f'Error checking RunPod status: {e}')
-        print(f'{"RunPod":<12} error')
-
-    # Check vLLM status
-    try:
-        config_manager = ConfigManager()
-        config = config_manager.load_settings()
-        port = config.local_tunnel_port
-        endpoint = f'http://127.0.0.1:{port}/v1/models'
-
-        # Use curl to probe the direct tunnel port
-        cmd = ['curl', '--fail', '--silent', '--max-time', '2', endpoint]
-        result = run_command(cmd, capture_output=True, check=False)
-
-        if result.returncode == 0:
-            print(f'{"vLLM":<12} reachable')
-        else:
-            print(f'{"vLLM":<12} not reachable')
-    except Exception as e:
-        logger.error(f'Error checking vLLM status: {e}')
-        print(f'{"vLLM":<12} error')
+    for label, unit in zip(
+        ('Socket', 'Proxy', 'Tunnel'), result.units, strict=True
+    ):
+        suffix = f' ({unit.sub_state})' if unit.sub_state else ''
+        if unit.detail:
+            suffix = f' ({unit.detail})'
+        print(f'{label:<12} {unit.state.value}{suffix}')
+    provider = result.provider
+    if provider.state is ProviderState.AVAILABLE:
+        print(f'{"RunPod":<12} {provider.lifecycle}')
+        print(f'{"Pod ID":<12} {provider.pod_id}')
+        if provider.gpu:
+            print(f'{"GPU":<12} {provider.gpu}')
+    else:
+        detail = f' ({provider.detail})' if provider.detail else ''
+        print(f'{"RunPod":<12} {provider.state.value}{detail}')
+    print(f'{"vLLM":<12} {result.endpoint.value}')
+    print(f'{"Overall":<12} {result.overall.value}')
+    if result.exit_code:
+        raise click.exceptions.Exit(result.exit_code)
 
 
 @cli.command()
