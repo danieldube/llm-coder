@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import Settings
 from .interfaces import CommandRunner
+from .state import atomic_write_private
 
 ENDPOINT_STATE_FILE = 'runtime.ssh-endpoint.json'
 
@@ -49,20 +50,10 @@ def _write_endpoint(
     state_dir: Path, pod_id: str, host: str, port: int
 ) -> None:
     path = state_dir / ENDPOINT_STATE_FILE
-    temporary = path.with_name(path.name + '.tmp')
     try:
-        descriptor = os.open(
-            temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
-        )
-        with os.fdopen(descriptor, 'w') as output:
-            json.dump({'pod_id': pod_id, 'host': host, 'port': port}, output)
-            output.write('\n')
-            output.flush()
-            os.fsync(output.fileno())
-        temporary.replace(path)
-        path.chmod(0o600)
+        content = json.dumps({'pod_id': pod_id, 'host': host, 'port': port})
+        atomic_write_private(path, content + '\n')
     except OSError as exc:
-        temporary.unlink(missing_ok=True)
         raise RuntimeError(
             f'Cannot persist SSH endpoint state at {path}'
         ) from exc
