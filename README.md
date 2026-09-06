@@ -59,6 +59,16 @@ Use `llm-down --remove-integration` to remove the generated OpenCode file and
 this installation's named JetBrains ACP entry as well. Credentials, Pod state,
 remote storage, and unrelated ACP entries are never removed by that option.
 
+## Uninstallation
+
+Run `./uninstall.sh` from a checkout to remove the installed user-systemd
+units, console commands, runtime files, and IDE integration. The script uses
+the installed `llm-runtime remove-integration` command so configuration is
+parsed without executing it. It intentionally preserves configuration,
+credentials, the dedicated SSH key, remote storage, and the state directory at
+`${XDG_STATE_HOME:-$HOME/.local/state}/llm-coding`; delete those separately if
+they are no longer needed.
+
 ## Startup failures
 
 `llm-up` reports the failed activation stage and a saved runtime diagnostic.
