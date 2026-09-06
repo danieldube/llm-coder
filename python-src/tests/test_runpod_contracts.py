@@ -5,6 +5,7 @@
 import stat
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -45,7 +46,11 @@ class TestRunPodContracts(unittest.TestCase):
             self.assertEqual(RunPodClient('key').get_pods(), [_pod()])
 
     def test_get_pods_rejects_malformed_item_and_wrong_top_level(self) -> None:
-        for payload in ([{'id': 'pod-1'}], {'pods': []}):
+        malformed_payloads: tuple[object, ...] = (
+            [{'id': 'pod-1'}],
+            {'pods': []},
+        )
+        for payload in malformed_payloads:
             with (
                 self.subTest(payload=payload),
                 patch(
@@ -75,12 +80,13 @@ class TestRunPodContracts(unittest.TestCase):
 
     def test_object_endpoints_validate_their_specific_contracts(self) -> None:
         client = RunPodClient('key')
-        for method, payload in (
+        endpoint_cases: tuple[tuple[Callable[[], object], object], ...] = (
             (lambda: client.create_pod({}), []),
             (lambda: client.get_pod('pod-1'), [_pod()]),
             (lambda: client.start_pod('pod-1'), {}),
             (lambda: client.stop_pod('pod-1'), {'id': 'another'}),
-        ):
+        )
+        for method, payload in endpoint_cases:
             with (
                 self.subTest(method=method),
                 patch(
@@ -164,13 +170,12 @@ class TestPersistedPodIdentity(unittest.TestCase):
             patch.object(runtime, 'ConfigManager', return_value=self.manager),
             patch.object(runtime, 'RunPodClient', return_value=client),
             patch.object(runtime, '_systemctl', systemctl),
-            patch.object(
-                runtime.Path,
-                'home',
+            patch(
+                'llm_coding.runtime.Path.home',
                 return_value=self.manager.state_dir / 'home',
             ),
         ):
-            runtime.down()
+            runtime.down()  # type: ignore[no-untyped-call]
         client.get_pod.assert_called_once_with('pod-1')
         client.find_pod_by_name.assert_not_called()
         client.stop_pod.assert_called_once_with('pod-1')
