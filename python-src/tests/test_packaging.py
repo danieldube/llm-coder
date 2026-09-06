@@ -50,7 +50,7 @@ class WheelPackagingTests(unittest.TestCase):
                 metadata = BytesParser().parsebytes(
                     archive.read(metadata_name)
                 )
-                self.assertEqual(metadata['Requires-Python'], '>=3.11')
+                assert metadata['Requires-Python'] == '>=3.11'
 
             environment = root / 'environment'
             venv.EnvBuilder(with_pip=True).create(environment)
@@ -80,7 +80,7 @@ class WheelPackagingTests(unittest.TestCase):
                 )
 
             probe = (
-                "import importlib.resources as r; "
+                'import importlib.resources as r; '
                 "assert r.read_text('llm_coding.assets.remote', "
                 "'ensure-vllm.sh'); "
                 "assert r.read_text('llm_coding.assets.config', "

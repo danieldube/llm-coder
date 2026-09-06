@@ -71,7 +71,7 @@ class RunPodClient:
             raise RunPodProtocolError(
                 f'RunPod API {method} {path} returned invalid JSON'
             ) from exc
-        if not isinstance(result, (dict, list)):
+        if not isinstance(result, dict | list):
             raise RunPodProtocolError(
                 f'RunPod API {method} {path} returned '
                 f'{type(result).__name__}; expected an object or array'

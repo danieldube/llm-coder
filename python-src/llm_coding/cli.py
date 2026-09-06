@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import click
 import requests
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 def run_command(
     cmd: list[str], capture_output: bool = True, check: bool = True
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run a command and handle errors"""
     try:
         if capture_output:
@@ -42,18 +43,16 @@ def run_command(
                 cmd, capture_output=True, text=True, check=check
             )
         else:
-            result = subprocess.run(cmd, check=check)
+            result = subprocess.run(cmd, check=check, text=True)
         return result
     except subprocess.CalledProcessError as e:
-        logger.error(f'Command failed: {" ".join(cmd)}')
-        logger.error(f'Return code: {e.returncode}')
+        logger.error('Command failed: %s', ' '.join(cmd))
+        logger.error('Return code: %s', e.returncode)
         if e.stdout:
-            logger.error(f'STDOUT: {e.stdout}')
+            logger.error('STDOUT: %s', e.stdout)
         if e.stderr:
-            logger.error(f'STDERR: {e.stderr}')
-        if check:
-            raise
-        return e
+            logger.error('STDERR: %s', e.stderr)
+        raise
 
 
 def get_systemd_service_info(service_name: str) -> tuple[str, str]:
@@ -70,9 +69,7 @@ def activation_failure_mtime_ns(state_dir: Path) -> int:
         return 0
 
 
-def print_activation_failure(
-    state_dir: Path, newer_than_ns: int = 0
-) -> bool:
+def print_activation_failure(state_dir: Path, newer_than_ns: int = 0) -> bool:
     """Print the specific error recorded by the systemd pre-start command."""
     path = state_dir / 'runtime.activation-error'
     try:
@@ -98,7 +95,7 @@ def read_activation_status(state_dir: Path) -> str:
 
 
 def print_runtime_ready_summary(
-    config: Settings, state_dir: Path, proxy_models: dict
+    config: Settings, state_dir: Path, proxy_models: dict[str, Any]
 ) -> None:
     """Print a concise, evidence-based summary after successful activation."""
     model = config.served_model_name
@@ -126,7 +123,8 @@ def print_runtime_ready_summary(
         )
     if not any(item.get('id') == model for item in tunnel_models):
         fatal(
-            f'Proxy responded, but the SSH tunnel does not serve expected model {model}'
+            'Proxy responded, but the SSH tunnel does not serve expected '
+            f'model {model}'
         )
 
     unit_states = {
@@ -179,7 +177,9 @@ def print_runtime_ready_summary(
     print(f'  CLion ACP:      {config.jetbrains_agent_name} ({acp_state})')
 
 
-def _shutdown_summary_items(include_integration: bool = False):
+def _shutdown_summary_items(
+    include_integration: bool = False,
+) -> tuple[list[str], list[str]]:
     """Snapshot managed resources so shutdown output describes real changes."""
     stopped = []
     removed = []
@@ -250,7 +250,7 @@ def llm_install() -> None:
 
 
 @cli.command()
-def llm_up():
+def llm_up() -> None:
     """Activate the LLM runtime"""
     check_dependencies()
 
@@ -268,8 +268,8 @@ def llm_up():
 
     try:
         ensure_socket(config)
-    except Exception as e:
-        fatal(f'Could not install or activate the llm-coding socket: {e}')
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        fatal(f'Could not install or activate the llm-coding socket: {exc}')
 
     try:
         # Get initial invocation ID
@@ -278,9 +278,8 @@ def llm_up():
             _, initial_invocation = get_systemd_service_info(
                 'llm-coding-proxy.service'
             )
-        except Exception:
+        except (OSError, RuntimeError):
             logger.debug('Failed to get initial invocation ID', exc_info=True)
-            initial_invocation = ''
 
         # `llm-down` from older installations stopped only the tunnel and
         # RunPod.  That can leave socket-proxyd running while its upstream
@@ -297,7 +296,8 @@ def llm_up():
                 tunnel_response.raise_for_status()
             except requests.RequestException:
                 print(
-                    'Recovering an active proxy with an unavailable SSH tunnel...',
+                    'Recovering an active proxy with an unavailable SSH '
+                    'tunnel...',
                     file=sys.stderr,
                 )
                 result = run_command(
@@ -319,7 +319,8 @@ def llm_up():
                     if print_activation_failure(config_manager.state_dir):
                         sys.exit(1)
                     fatal(
-                        f'Could not restart the stale llm-coding proxy: {details}'
+                        'Could not restart the stale llm-coding proxy: '
+                        f'{details}'
                     )
 
         print('Activating the LLM runtime...', file=sys.stderr)
@@ -408,7 +409,9 @@ def llm_up():
                     config_manager.state_dir, failure_started_at
                 ):
                     print(
-                        'LLM runtime activation failed. See: journalctl --user --unit llm-coding-proxy.service --lines 30 --no-pager',
+                        'LLM runtime activation failed. See: journalctl '
+                        '--user --unit llm-coding-proxy.service --lines 30 '
+                        '--no-pager',
                         file=sys.stderr,
                     )
                 sys.exit(1)
@@ -424,7 +427,8 @@ def llm_up():
                 config_manager.state_dir, failure_started_at
             ):
                 print(
-                    'LLM runtime activation failed. See: journalctl --user --unit llm-coding-proxy.service --lines 30 --no-pager',
+                    'LLM runtime activation failed. See: journalctl --user '
+                    '--unit llm-coding-proxy.service --lines 30 --no-pager',
                     file=sys.stderr,
                 )
             sys.exit(1)
@@ -442,8 +446,13 @@ def llm_up():
             config, config_manager.state_dir, proxy_models
         )
 
-    except Exception as e:
-        print(f'Error during activation: {e}', file=sys.stderr)
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        subprocess.SubprocessError,
+    ) as exc:
+        print(f'Error during activation: {exc}', file=sys.stderr)
         sys.exit(1)
 
 
@@ -488,9 +497,12 @@ def llm_down(remove_integration: bool = False) -> None:
                 detail = (
                     result.stderr or result.stdout or 'unknown systemd error'
                 ).strip()
-                errors.append(
-                    f'could not stop {label} ({detail.splitlines()[-1] if detail else "unknown systemd error"})'
+                last_line = (
+                    detail.splitlines()[-1]
+                    if detail
+                    else 'unknown systemd error'
                 )
+                errors.append(f'could not stop {label} ({last_line})')
         except OSError as exc:
             errors.append(f'could not stop {label} ({exc})')
     try:
@@ -551,7 +563,7 @@ def llm_status() -> None:
 
 @cli.command()
 @click.option('--activate', is_flag=True, help='Perform full activation test')
-def llm_doctor(activate: bool):
+def llm_doctor(activate: bool) -> None:
     """Validate the LLM setup"""
     logger.info('Running doctor checks...')
     check_dependencies()
@@ -610,7 +622,8 @@ def llm_doctor(activate: bool):
         ).stdout.strip()
         if installed_version != expected_version:
             fatal(
-                f'OpenCode version {installed_version}; expected {expected_version}'
+                f'OpenCode version {installed_version}; expected '
+                f'{expected_version}'
             )
     print('OpenCode installed')
 
@@ -633,8 +646,8 @@ def llm_doctor(activate: bool):
                 fatal('llm-coding.socket is not listening')
         else:
             fatal('llm-coding.socket is not enabled')
-    except Exception as e:
-        fatal(f'systemd socket activation check failed: {e}')
+    except OSError as exc:
+        fatal(f'systemd socket activation check failed: {exc}')
 
     # Check JetBrains ACP registration
     acp_file = Path.home() / '.jetbrains' / 'acp.json'
@@ -650,13 +663,14 @@ def llm_doctor(activate: bool):
 
     if not activate:
         print(
-            "Use 'llm-doctor --activate' for an end-to-end RunPod/vLLM/tool-calling test."
+            "Use 'llm-doctor --activate' for an end-to-end RunPod/vLLM/"
+            'tool-calling test.'
         )
         return
 
     logger.info('Running activation test...')
     try:
-        llm_up.callback()
+        click.get_current_context().invoke(llm_up)
         print('RunPod/vLLM activation')
         endpoint = f'http://127.0.0.1:{config.local_proxy_port}/v1'
         models = (
@@ -695,7 +709,10 @@ def llm_doctor(activate: bool):
                 'messages': [
                     {
                         'role': 'user',
-                        'content': 'Call get_temperature for Berlin. Use the tool; do not answer directly.',
+                        'content': (
+                            'Call get_temperature for Berlin. Use the tool; '
+                            'do not answer directly.'
+                        ),
                     }
                 ],
                 'tools': [
