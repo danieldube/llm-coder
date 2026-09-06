@@ -130,6 +130,16 @@ class TestPersistedPodIdentity(unittest.TestCase):
             runtime._select_pod(self.manager, client, 'model')
         self.assertFalse((self.manager.state_dir / 'runtime.pod-id').exists())
 
+    def test_failed_atomic_write_removes_temporary_state(self) -> None:
+        temporary = self.manager.state_dir / 'runtime.pod-id.tmp'
+        with (
+            patch.object(Path, 'replace', side_effect=OSError('disk error')),
+            self.assertRaisesRegex(RuntimeError, 'Cannot persist'),
+        ):
+            runtime._write_pod_id(self.manager, 'pod-1')
+
+        self.assertFalse(temporary.exists())
+
     def test_api_or_protocol_failure_does_not_fall_back_to_name(self) -> None:
         runtime._write_pod_id(self.manager, 'pod-1')
         for error in (
