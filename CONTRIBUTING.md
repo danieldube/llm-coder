@@ -47,6 +47,19 @@ docker build --tag llm-coding-runtime:local docker
 
 All behavior changes must be accompanied by focused unit tests.
 
+## Updating the OpenCode release
+
+OpenCode installation uses the reviewed release allowlist in
+`python-src/llm_coding/opencode.py`, rather than an upstream installer script.
+For a version update, review the tagged `anomalyco/opencode` GitHub release and
+security advisories, download each supported CLI archive directly, and compute
+its SHA-256 digest independently with `sha256sum`. Add all platform/architecture
+artifact names and digests under the new version in `_RELEASE_ARTIFACTS`, then
+update `OPENCODE_VERSION` in both example configuration files. Treat missing
+platform artifacts as unsupported rather than copying a digest from another
+build. Run the full validation above and `llm-doctor --activate`; the detailed
+provenance and trust requirements are documented in `SECURITY.md`.
+
 ## Deferred regression backlog
 
 Tests must state an executable contract and must never be placeholders that
