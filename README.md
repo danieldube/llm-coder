@@ -12,16 +12,33 @@ Python implementation of the llm-coding project that provides the same functiona
 
 ## Installation
 
+Python 3.11 or newer is required. Python 3.11 is the production minimum used
+by the runtime image and CI, while Python 3.13 is the primary development
+version. Packaging metadata rejects installation on older interpreters.
+
+The local commands require Linux with a user systemd session, OpenSSH, and
+`curl`. Docker is required only to build the RunPod vLLM runtime image. On an
+Ubuntu 24.04 workstation, install the system prerequisites with:
+
+```bash
+sudo apt-get install python3 python3-venv openssh-client curl
+python3 --version  # must report 3.11 or newer
+```
+
+Create a virtual environment with a supported interpreter before installing:
+
 ```bash
 # Install in development mode
-pip install -e .
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
 
 # The first `llm-up` creates and enables the required user systemd socket.
 # To provision it explicitly instead, run:
-llm-install
+.venv/bin/llm-install
 
 # Or using uv
-uv pip install -e .
+uv venv --python 3.11
+uv pip install --python .venv/bin/python -e .
 ```
 
 ## Usage
@@ -55,5 +72,5 @@ configuration file.
 make test
 
 # Install dependencies
-pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```

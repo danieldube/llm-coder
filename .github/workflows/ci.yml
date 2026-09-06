@@ -27,12 +27,17 @@ jobs:
         run: .venv/bin/pre-commit run --all-files
 
   unit:
+    name: Unit tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Create repository virtual environment
@@ -75,6 +80,16 @@ jobs:
             llm-runtime opencode-runpod; do
             /tmp/llm-coding-wheel/bin/"$command" --help >/dev/null
           done
+      - name: Select unsupported Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Verify Python 3.10 is rejected
+        run: |
+          if python -m pip install --no-deps dist/*.whl; then
+            echo 'Wheel unexpectedly supports Python 3.10.' >&2
+            exit 1
+          fi
 
   docker-changes:
     runs-on: ubuntu-latest

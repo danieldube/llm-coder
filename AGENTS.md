@@ -27,7 +27,9 @@ before changing those areas.
 
 ## Development workflow
 
-Use Python 3.8+ for compatibility; tooling is configured for Python 3.13.
+Python 3.11 is the minimum supported version; Python 3.13 is the primary
+development version. Ruff and mypy target Python 3.11 so checks enforce the
+full supported language and standard-library contract.
 All AI agents must use the repository's `.venv` for Python commands and must
 never install packages into or run checks with the system Python. Activate it
 before working, or invoke its interpreter directly:

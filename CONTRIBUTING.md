@@ -13,8 +13,11 @@ Normally the implementation must be changed so no findings show up.
 
 Create the repository environment and install the development dependencies:
 
+Use Python 3.11 or newer. CI tests the minimum (3.11) and primary development
+version (3.13); local static analysis targets the minimum version.
+
 ```bash
-python -m venv .venv
+python3.13 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt -e .
 .venv/bin/python -m pip install build
 ```
