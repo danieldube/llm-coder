@@ -79,7 +79,7 @@ nohup "${LAUNCHER}" \
     "${TOOL_CALL_PARSER}" \
     "${PORT}" \
     "${LOG_FILE}" \
-    >"${LOG_FILE}" 2>&1 < /dev/null &
+    > /dev/null 2>&1 < /dev/null &
 
 echo "$!" > "${PID_FILE}"
 

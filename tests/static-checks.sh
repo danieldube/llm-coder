@@ -32,8 +32,7 @@ while IFS= read -r metadata; do
     fi
 done < <(git -C "${ROOT}" ls-files | grep -E '(^|/)[^/]*\.egg-info/')
 
-if rg -n \
-    --glob '!static-checks.sh' \
+if grep -R -n -E \
     'runtime-(up|down)\.sh|socket-proxy\.sh|/bin/tunnel\.sh' \
     "${ROOT}/README.md" "${ROOT}/docs" "${ROOT}/SECURITY.md" \
     "${ROOT}/systemd"; then
@@ -56,7 +55,7 @@ mapfile -t installed_commands < <(
     }' "${ROOT}/pyproject.toml" | sort
 )
 mapfile -t documented_commands < <(
-    sed -n 's/^| `\([a-z][a-z0-9-]*\)` |.*$/\1/p' \
+    sed -n 's/^| `\([a-z][a-z0-9-]*\)` |.*/\1/p' \
         "${ROOT}/README.md" | sort
 )
 if [[ "${installed_commands[*]}" != "${documented_commands[*]}" ]]; then
