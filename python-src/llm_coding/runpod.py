@@ -1,5 +1,6 @@
 """Typed RunPod provider requests and response validation."""
 
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -29,6 +30,14 @@ class RunPodAPIError(RuntimeError):
     def __init__(self, message: str, status_code: int) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class RunPodEndpoint:
+    """A validated public endpoint exposed by a RunPod pod."""
+
+    host: str
+    port: int
 
 
 class RunPodClient:
@@ -149,6 +158,37 @@ class RunPodClient:
                 f'RunPod API GET {endpoint} returned a different pod id'
             )
         return pod
+
+    def get_pod_endpoint(self, pod_id: str) -> RunPodEndpoint | None:
+        """Return the validated SSH endpoint, or ``None`` while pending."""
+        pod = self.get_pod(pod_id)
+        endpoint = f'GET /pods/{pod_id}'
+        host = pod.get('publicIp')
+        mappings = pod.get('portMappings')
+        if (
+            pod['desiredStatus'] != 'RUNNING'
+            and host is None
+            and mappings is None
+        ):
+            return None
+        if not isinstance(host, str) or not host:
+            raise RunPodProtocolError(
+                f'RunPod API {endpoint} returned no valid publicIp'
+            )
+        if not isinstance(mappings, dict):
+            raise RunPodProtocolError(
+                f'RunPod API {endpoint} returned invalid portMappings'
+            )
+        port = mappings.get('22')
+        if (
+            not isinstance(port, int)
+            or isinstance(port, bool)
+            or not 1 <= port <= 65535
+        ):
+            raise RunPodProtocolError(
+                f'RunPod API {endpoint} returned no valid SSH port mapping'
+            )
+        return RunPodEndpoint(host, port)
 
 
 def pod_create_body(
