@@ -1,51 +1,55 @@
-# Project Contribution Guidelines
+# Contributing
 
-## Code Style and Standards
-
-All code must comply with PEP8 standards with 79 character line limits.
-
-## Pre-commit Checks
-
-It's not allowed to suppress pre-commit findings - unless some rare edge cases.
-Normally the implementation must be changed so no findings show up.
+Follow [AGENTS.md](AGENTS.md) for source ownership and operational invariants.
+Use Ruff's 79-character Python lines and single quotes, fully typed functions,
+and strict mypy. Fix findings rather than suppressing them unless a narrow
+exception is justified. Keep prose concise and use Mermaid for useful diagrams.
 
 ## Required local validation
 
-Create the repository environment and install the development dependencies:
-
-Use Python 3.11 or newer. CI tests the minimum (3.11) and primary development
+Create the repository environment with Python 3.11 or newer and install the
+development dependencies. CI tests the minimum (3.11) and primary development
 version (3.13); local static analysis targets the minimum version.
 
 ```bash
 python3.13 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt -e .
-.venv/bin/python -m pip install build
 ```
 
-Run the same validation contracts that CI runs:
+Run the following checks from the checkout. `jq` is required for static
+checks; ShellCheck is used when available. Pre-commit and packaging can need
+network access to download dependencies. The unit suite includes a wheel
+build/install test but mocks operational RunPod, SSH, and systemd calls.
 
 ```bash
 .venv/bin/pre-commit run --all-files
 .venv/bin/python -m unittest discover -s python-src/tests
 bash tests/static-checks.sh
 .venv/bin/python -m build
-.venv/bin/python -m venv /tmp/llm-coding-wheel
-/tmp/llm-coding-wheel/bin/python -m pip install dist/*.whl
+llm_wheel_env="$(mktemp -d /tmp/llm-coding-wheel.XXXXXX)"
+.venv/bin/python -m venv "$llm_wheel_env"
+"$llm_wheel_env/bin/python" -m pip install dist/*.whl
 for command in llm-up llm-down llm-status llm-doctor llm-install \
   llm-runtime opencode-runpod; do
-  /tmp/llm-coding-wheel/bin/"$command" --help >/dev/null
+  "$llm_wheel_env/bin/$command" --help >/dev/null
 done
 ```
 
 The clean wheel environment is deliberately outside `.venv`: it catches
 missing package data and source-layout leaks. It is disposable and must not be
-reused as a development environment. When Docker inputs change, also run:
+reused as a development environment. Use a fresh build output directory if
+`dist/` contains older wheels: the install glob must select only this build.
+CI also verifies that Python 3.10 rejects the wheel via `Requires-Python`.
+When `docker/**`, `.dockerignore`, or Docker CI changes, also run:
 
 ```bash
 docker build --tag llm-coding-runtime:local docker
 ```
 
-All behavior changes must be accompanied by focused unit tests.
+All behavior changes require focused unit tests. Do not run live activation
+as routine validation. Verify matching `config/` and `remote/` assets against
+`python-src/llm_coding/assets/` when changing them. The wheel test checks asset
+presence, not byte equality. Report failed or unavailable checks in the handoff.
 
 ## Updating the OpenCode release
 
@@ -57,8 +61,9 @@ its SHA-256 digest independently with `sha256sum`. Add all platform/architecture
 artifact names and digests under the new version in `_RELEASE_ARTIFACTS`, then
 update `OPENCODE_VERSION` in both example configuration files. Treat missing
 platform artifacts as unsupported rather than copying a digest from another
-build. Run the full validation above and `llm-doctor --activate`; the detailed
-provenance and trust requirements are documented in `SECURITY.md`.
+build. Run the full validation above. In an explicitly selected operational
+environment, also run `llm-doctor --activate`. See `SECURITY.md` for provenance
+and trust requirements.
 
 ## Deferred regression backlog
 
@@ -66,8 +71,9 @@ Tests must state an executable contract and must never be placeholders that
 fail or skip unconditionally. The audit of the former gap suites retained the
 following ideas here until a remediation defines observable behavior:
 
-- **TEST-GAP-001 — concurrent systemd operations:** define serialization and
-  expected state transitions for simultaneous install/start/stop requests.
+- **TEST-GAP-001 — concurrent systemd operations:** the runtime lifecycle lock
+  is tested, but CLI unit reconciliation and socket/proxy stops occur outside
+  it. Define and test the complete command-level concurrency contract.
 - **TEST-GAP-002 — SSH child lifecycle:** define process ownership, termination,
   and reaping requirements before adding a subprocess-leak regression.
 - **TEST-GAP-003 — degraded dependencies:** enumerate which missing optional
@@ -80,3 +86,15 @@ following ideas here until a remediation defines observable behavior:
 Configuration validation, bounded lock acquisition, rejected lock-handle
 cleanup, recoverable SSH/systemd probes, and atomic state-file cleanup have
 concrete regression contracts in the test suite and are not duplicated here.
+
+## Known implementation gaps
+
+- Fresh `llm-install` passes a single path to `_asset_text`, which requires
+  separate package/name arguments. Missing templates fail before validation;
+  the README documents manual template creation.
+- Pod replacement after a provider 404 can retain SSH endpoint state for the
+  previous Pod and fail enrollment. There is no replacement command.
+- Configuration is inherited separately by CLI and systemd; secret environment
+  variables are not filtered when launching OpenCode.
+- Status reports normal idle standby as degraded, and configuration errors
+  return the same exit code as an inactive stack.

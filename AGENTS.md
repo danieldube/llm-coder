@@ -1,100 +1,102 @@
-# AGENTS.md
+# Agent instructions
 
-## Project overview
+## Scope and invariants
 
-`llm-coding` is a Python implementation of a local coding-agent runtime. It
-manages a RunPod-hosted vLLM service, an SSH tunnel, and user-level systemd
-socket activation. The command-line entry points include `llm-up`, `llm-down`,
-`llm-status`, `llm-doctor`, `llm-install`, and `opencode-runpod`.
+`llm-coding` is a Linux/Python controller for RunPod-hosted vLLM, SSH forwarding,
+user-systemd socket activation, and host-native OpenCode/JetBrains ACP.
+Python 3.11 is the minimum; 3.13 is the primary development version.
 
-Treat changes to lifecycle, networking, systemd, and remote-runtime code as
-operationally sensitive: preserve idempotency, avoid exposing credentials, and
-keep the vLLM endpoint bound to localhost unless the change explicitly requires
-otherwise. Read [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md)
-before changing those areas.
+Before editing, inspect `git status` and preserve existing user changes.
+Read [SECURITY.md](SECURITY.md) and [architecture](docs/architecture.md) before
+changing lifecycle, networking, credentials, systemd, or remote execution.
 
-## Repository layout
+- Keep the proxy, tunnel, and vLLM listeners on `127.0.0.1`; expose only SSH
+  in the Pod request unless explicitly asked to change the security boundary.
+- Preserve Pod identity, persistent storage, idempotent lifecycle operations,
+  bounded lock acquisition, and fail-closed SSH host-key verification.
+- Keep secrets out of logs, examples, generated OpenCode configuration, and
+  subprocess environments. Do not inspect or print real credential files.
+- Mock RunPod, SSH, systemd, and agent execution in tests. Do not create Pods,
+  launch live inference, modify user services, or run uninstall commands as
+  routine validation. `llm-doctor --activate` is an operational integration test.
+- Keep changes scoped to the request. Record unrelated defects instead of
+  silently repairing them. See documented limitations in configuration/setup.
 
-- `python-src/llm_coding/`: Python package and CLI implementation.
-- `python-src/tests/`: `unittest` test suite.
-- `remote/`: scripts executed on the RunPod machine; `ensure-vllm.sh` provisions
-  and starts vLLM.
-- `systemd/`: templates and units for the user socket, proxy, and tunnel.
-- `config/`: checked-in example configuration and OpenCode configuration.
-- `tests/static-checks.sh`: syntax and configuration checks for shell/JSON
-  assets.
-- `docs/`: architecture and reference documentation.
+## Source map
 
-## Development workflow
+| Task | Authoritative source |
+| --- | --- |
+| Settings, validation, XDG paths | `python-src/llm_coding/config.py` |
+| CLI behavior and entry points | `cli.py`, `pyproject.toml` |
+| Lifecycle orchestration | `runtime.py` |
+| RunPod payloads and response contracts | `runpod.py` |
+| User units and systemctl | `systemd.py`; no static unit templates in `systemd/` |
+| SSH trust and forwarding | `ssh.py` |
+| Locks, Pod identity, diagnostics | `state.py` |
+| Status and exit codes | `status.py` |
+| OpenCode release allowlist, config, ACP | `opencode.py` |
+| Dependency injection protocols | `interfaces.py` |
+| Remote build and launcher | `docker/Dockerfile`, `docker/start-vllm.sh` |
+| Remote health/restart orchestration | `remote/ensure-vllm.sh` and packaged copy |
+| Validation | `python-src/tests/`, `tests/static-checks.sh`, `.github/workflows/ci.yml` |
 
-Python 3.11 is the minimum supported version; Python 3.13 is the primary
-development version. Ruff and mypy target Python 3.11 so checks enforce the
-full supported language and standard-library contract.
-All AI agents must use the repository's `.venv` for Python commands and must
-never install packages into or run checks with the system Python. Activate it
-before working, or invoke its interpreter directly:
+Python filenames without a directory above are under `python-src/llm_coding/`.
+Import focused modules in new code; `core.py` is a compatibility facade.
+`python-src/main.py` and `uninstall.sh` are legacy artifacts, not the current
+entry points or installation workflow.
 
-```bash
-source .venv/bin/activate
-python -m pip install -e .
-python -m pip install -r requirements.txt
-# Alternatively: .venv/bin/python -m unittest discover -s python-src/tests
-```
+Installed resources come from `python-src/llm_coding/assets/` through
+`importlib.resources`. Keep these pairs byte-identical when editing:
 
-Run the full required validation before handing off a change. These are the
-same independently visible checks run by CI:
+- `config/*` and `python-src/llm_coding/assets/config/*` (matching assets).
+- `remote/ensure-vllm.sh` and its `assets/remote/` copy.
 
-```bash
-.venv/bin/pre-commit run --all-files
-.venv/bin/python -m unittest discover -s python-src/tests
-bash tests/static-checks.sh
-.venv/bin/python -m build
-.venv/bin/python -m venv /tmp/llm-coding-wheel
-/tmp/llm-coding-wheel/bin/python -m pip install dist/*.whl
-for command in llm-up llm-down llm-status llm-doctor llm-install \
-  llm-runtime opencode-runpod; do
-  /tmp/llm-coding-wheel/bin/"$command" --help >/dev/null
-done
-docker build --tag llm-coding-runtime:local docker
-```
+The wheel test checks resource inclusion, not equality of duplicate assets.
+Keep generated metadata, `build/`, `dist/`, and `.venv/` out of commits.
 
-The packaging commands require `build` in `.venv`. The final Docker command is
-required when `docker/**`, `.dockerignore`, or the Docker CI definition changes.
-Do not suppress lint, formatting, or type checking findings without a narrowly
-justified exception; fix the underlying code instead. If a dependency lacks
-type information, add its stub package to the mypy hook's
-`additional_dependencies` in `.pre-commit-config.yaml`.
+## Implementation rules
 
-## Implementation standards
+- Use the repository `.venv` for all development Python commands. Never install
+  packages into or run checks with system Python. The disposable wheel-test
+  environment described in CONTRIBUTING.md is the validation exception.
+- Follow Ruff: 79-character Python lines, single quotes, Python 3.11 syntax.
+  Type functions fully; pre-commit runs strict mypy. Use `dict[str, Any]` only
+  for heterogeneous mappings that require it.
+- Prefer `pathlib.Path` and subprocess argument lists. Retain Bash
+  `set -euo pipefail`, quote expansions, and preserve remote-shell argument
+  safety. Local argument lists alone do not quote arguments for remote SSH.
+- Use explicit runtime dependencies for commands, clocks, sleep, and providers.
+  Mock direct HTTP readiness calls separately. Preserve module boundaries.
+- Fix lint/type findings at their source. Any suppression needs a narrow
+  justification. Add missing third-party stubs to the mypy hook's
+  `additional_dependencies` in `.pre-commit-config.yaml`.
+- Add focused tests for behavior changes; avoid placeholders and unconditional
+  skips. Update docs/examples when interfaces, defaults, or boundaries change.
+- Treat Docker, CUDA/vLLM, model revision/parser, and OpenCode artifact pins as
+  compatibility contracts. Follow SECURITY.md for OpenCode release updates;
+  changing version settings alone does not update the remote image.
 
-- Follow the repository's Ruff configuration: 79-character lines, single
-  quotes, and the configured lint rules.
-- Keep public and internal Python functions fully typed. Mypy is strict; use
-  `dict[str, Any]` for heterogeneous JSON/config mappings when needed.
-- Prefer `pathlib.Path` for filesystem operations and `subprocess.run()` with
-  argument lists rather than shell strings.
-- Handle failures explicitly and include useful, non-sensitive diagnostics.
-  Never log API keys, SSH private-key contents, or environment-file values.
-- Preserve existing CLI behaviour and configuration compatibility unless a
-  deliberate breaking change is requested.
-- Keep shell scripts POSIX-aware where practical, quote expansions, and retain
-  `set -euo pipefail` in Bash scripts. Ensure modified scripts pass `bash -n`;
-  `shellcheck` is used automatically by the static checks when available.
+## Validation and handoff
 
-## Tests and documentation
+Setup and exact commands are maintained in
+[CONTRIBUTING.md](CONTRIBUTING.md#required-local-validation). Use that sequence:
 
-- Add or update focused unit tests for behaviour changes. Mock subprocess,
-  network, filesystem, and systemd interactions; tests must not create real
-  pods, tunnels, or user services.
-- Update example configuration, systemd templates, and architecture/security
-  documentation whenever an operational interface or security boundary changes.
-- Do not add secrets to the repository. Use the example environment files as
-  templates and keep real credential files private and mode-restricted.
+1. `.venv/bin/pre-commit run --all-files`.
+2. `.venv/bin/python -m unittest discover -s python-src/tests`.
+3. `bash tests/static-checks.sh`.
+4. `.venv/bin/python -m build`, then install the wheel into a fresh temporary
+   environment and run all seven installed commands with `--help`.
+5. Build the Docker image when Docker inputs or Docker CI change.
 
-## Change hygiene
+Run the full required validation before handing off a change, including docs
+changes. Packaging checks may download build/runtime dependencies; they do not
+contact RunPod. Static checks require `jq` and run ShellCheck when available.
+Do not weaken checks to accommodate an unavailable network or tool; report the
+blocker. CI additionally tests Python 3.11/3.13 and rejects installation on 3.10.
 
-- Keep diffs scoped to the requested work; do not reformat or alter unrelated
-  files.
-- Inspect existing changes before editing and preserve user-authored work.
-- State which validation commands were run and any checks that could not run in
-  the final handoff.
+Review the final diff for unrelated changes, stale documentation, secrets, and
+asset drift. Keep documentation technical and concise; use Mermaid when it
+clarifies flows. Use top-to-bottom Mermaid layouts and keep diagrams narrow;
+split complex flows into separate diagrams. Verify rendering after edits.
+State what changed, checks run, and any checks that could not run. Do not
+claim live operational validation from mocked tests.
