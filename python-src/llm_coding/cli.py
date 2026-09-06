@@ -25,6 +25,7 @@ from .core import (
 from .runtime import _asset_text, _startup_timeout_seconds, ensure_socket
 from .runtime import down as runtime_down
 from .runtime import install as runtime_install
+from .runtime import remove_integration as runtime_remove_integration
 
 logger = logging.getLogger(__name__)
 
@@ -364,7 +365,7 @@ def print_runtime_ready_summary(
     )
 
 
-def _shutdown_summary_items():
+def _shutdown_summary_items(include_integration: bool = False):
     """Snapshot managed resources so shutdown output describes real changes."""
     stopped = []
     removed = []
@@ -389,16 +390,18 @@ def _shutdown_summary_items():
         config = manager.load_config()
         for path, label in (
             (manager.state_dir / 'runtime.env', 'runtime.env'),
-            (manager.state_dir / 'opencode.json', 'opencode.json'),
         ):
             if path.exists():
                 removed.append(label)
-        acp_file = Path.home() / '.jetbrains' / 'acp.json'
-        if acp_file.exists():
-            acp = json.loads(acp_file.read_text())
-            agent = config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod')
-            if agent in acp.get('agent_servers', {}):
-                removed.append('CLion ACP entry')
+        if include_integration:
+            if (manager.state_dir / 'opencode.json').exists():
+                removed.append('OpenCode configuration')
+            acp_file = Path.home() / '.jetbrains' / 'acp.json'
+            if acp_file.exists():
+                acp = json.loads(acp_file.read_text())
+                agent = config.get('JETBRAINS_AGENT_NAME', 'OpenCode RunPod')
+                if agent in acp.get('agent_servers', {}):
+                    removed.append('CLion ACP entry')
         if config.get('RUNPOD_API_KEY') and config.get('RUNPOD_POD_NAME'):
             pod = RunPodClient(config['RUNPOD_API_KEY']).find_pod_by_name(
                 config['RUNPOD_POD_NAME']
@@ -614,11 +617,29 @@ def llm_up():
 
 
 @cli.command()
-def llm_down():
-    """Stop the LLM runtime and remove its OpenCode/CLion integration."""
+@click.option(
+    '--remove-integration',
+    is_flag=True,
+    help=(
+        "Also remove this installation's durable OpenCode configuration and "
+        'JetBrains ACP registration after confirmation.'
+    ),
+)
+def llm_down(remove_integration: bool = False) -> None:
+    """Stop the transient runtime; retain configuration for later reuse.
+
+    By default this explicitly stops the socket, proxy, SSH tunnel, and RunPod
+    while preserving installation data and IDE integration.  Use
+    --remove-integration to additionally unregister this project.
+    """
+    if remove_integration and not click.confirm(
+        'Remove this llm-coding OpenCode/JetBrains integration?',
+        default=False,
+    ):
+        raise click.Abort
     logger.info('Stopping LLM runtime...')
     errors = []
-    stopped, removed = _shutdown_summary_items()
+    stopped, removed = _shutdown_summary_items(remove_integration)
 
     # Disable the listener before stopping the proxy so a concurrent OpenCode
     # request cannot reactivate the service while teardown is in progress.
@@ -645,6 +666,11 @@ def llm_down():
         runtime_down()
     except RuntimeError as exc:
         errors.append(str(exc))
+    if remove_integration:
+        try:
+            runtime_remove_integration()
+        except RuntimeError as exc:
+            errors.append(str(exc))
     if errors:
         fatal(
             'Shutdown incomplete. '

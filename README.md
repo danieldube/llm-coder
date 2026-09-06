@@ -30,6 +30,8 @@ uv pip install -e .
 # Run the commands (same as original bash scripts)
 llm-up
 llm-down
+# Stop and also remove this project's durable IDE integration (prompts):
+llm-down --remove-integration
 llm-status
 llm-doctor
 opencode-runpod

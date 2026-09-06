@@ -29,6 +29,17 @@ sandbox**.
 These controls reduce accidental exposure. They do not prevent an approved
 shell command from accessing anything the Unix user can access.
 
+## Shutdown and integration removal
+
+Idle shutdown and ordinary `llm-down` stop the SSH tunnel and selected RunPod
+but intentionally retain the localhost socket integration, OpenCode
+configuration, JetBrains ACP registration, installation files, and reusable
+Pod identity. The explicit command also stops the socket and proxy for the
+current session. To remove the durable IDE integration, use
+`llm-down --remove-integration` and confirm the prompt. Removal targets only
+the configured llm-coding ACP agent name and preserves unrelated ACP entries;
+it does not delete credentials, Pod identity, or remote storage.
+
 ### Runtime dependencies
 
 The remote inference runtime is a pinned unit: the RunPod base image, CUDA
