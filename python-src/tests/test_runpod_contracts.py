@@ -1,0 +1,189 @@
+"""Contract and persisted-identity tests for the RunPod runtime."""
+
+# ruff: noqa: PT009, PT027
+
+import stat
+import tempfile
+import unittest
+from collections.abc import Callable
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import requests
+from llm_coding import runtime
+from llm_coding.core import (
+    RunPodAPIError,
+    RunPodClient,
+    RunPodProtocolError,
+)
+
+
+def _pod(pod_id: str = 'pod-1', name: str = 'model') -> dict[str, str]:
+    return {'id': pod_id, 'name': name, 'desiredStatus': 'RUNNING'}
+
+
+class TestRunPodContracts(unittest.TestCase):
+    def _response(self, payload: object) -> MagicMock:
+        response = MagicMock()
+        response.json.return_value = payload
+        response.raise_for_status.return_value = None
+        return response
+
+    def test_get_pods_accepts_direct_list_and_empty_list(self) -> None:
+        with patch(
+            'llm_coding.core.requests.request',
+            side_effect=[self._response([_pod()]), self._response([])],
+        ):
+            client = RunPodClient('key')
+            self.assertEqual(client.get_pods(), [_pod()])
+            self.assertEqual(client.get_pods(), [])
+
+    def test_get_pods_supports_only_explicit_legacy_envelope(self) -> None:
+        with patch(
+            'llm_coding.core.requests.request',
+            return_value=self._response({'data': [_pod()]}),
+        ):
+            self.assertEqual(RunPodClient('key').get_pods(), [_pod()])
+
+    def test_get_pods_rejects_malformed_item_and_wrong_top_level(self) -> None:
+        malformed_payloads: tuple[object, ...] = (
+            [{'id': 'pod-1'}],
+            {'pods': []},
+        )
+        for payload in malformed_payloads:
+            with (
+                self.subTest(payload=payload),
+                patch(
+                    'llm_coding.core.requests.request',
+                    return_value=self._response(payload),
+                ),
+            ):
+                with self.assertRaises(RunPodProtocolError):
+                    RunPodClient('key').get_pods()
+
+    def test_invalid_json_is_not_translated_to_an_empty_result(self) -> None:
+        response = self._response(None)
+        response.json.side_effect = ValueError('bad JSON')
+        with patch('llm_coding.core.requests.request', return_value=response):
+            with self.assertRaisesRegex(RunPodProtocolError, 'invalid JSON'):
+                RunPodClient('key').get_pods()
+
+    def test_http_error_remains_distinct_from_protocol_error(self) -> None:
+        response = self._response(None)
+        response.status_code = 503
+        response.text = 'unavailable'
+        response.raise_for_status.side_effect = requests.HTTPError('503')
+        with patch('llm_coding.core.requests.request', return_value=response):
+            with self.assertRaises(RunPodAPIError) as raised:
+                RunPodClient('key').get_pods()
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_object_endpoints_validate_their_specific_contracts(self) -> None:
+        client = RunPodClient('key')
+        endpoint_cases: tuple[tuple[Callable[[], object], object], ...] = (
+            (lambda: client.create_pod({}), []),
+            (lambda: client.get_pod('pod-1'), [_pod()]),
+            (lambda: client.start_pod('pod-1'), {}),
+            (lambda: client.stop_pod('pod-1'), {'id': 'another'}),
+        )
+        for method, payload in endpoint_cases:
+            with (
+                self.subTest(method=method),
+                patch(
+                    'llm_coding.core.requests.request',
+                    return_value=self._response(payload),
+                ),
+            ):
+                with self.assertRaises(RunPodProtocolError):
+                    method()
+
+
+class TestPersistedPodIdentity(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.manager = MagicMock()
+        self.manager.state_dir = Path(self.temporary.name)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_repeated_selection_uses_id_without_name_lookup(self) -> None:
+        client = MagicMock()
+        client.find_pod_by_name.return_value = _pod()
+        self.assertEqual(
+            runtime._select_pod(self.manager, client, 'model'), _pod()
+        )
+        client.get_pod.return_value = _pod()
+        self.assertEqual(
+            runtime._select_pod(self.manager, client, 'model'), _pod()
+        )
+        client.find_pod_by_name.assert_called_once_with('model')
+        self.assertEqual(client.get_pod.call_count, 1)
+        state = self.manager.state_dir / 'runtime.pod-id'
+        self.assertEqual(state.read_text(), 'pod-1\n')
+        self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o600)
+
+    def test_ambiguous_initial_adoption_fails_closed(self) -> None:
+        client = MagicMock()
+        client.find_pod_by_name.side_effect = ValueError('ambiguous')
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            runtime._select_pod(self.manager, client, 'model')
+        self.assertFalse((self.manager.state_dir / 'runtime.pod-id').exists())
+
+    def test_api_or_protocol_failure_does_not_fall_back_to_name(self) -> None:
+        runtime._write_pod_id(self.manager, 'pod-1')
+        for error in (
+            RunPodAPIError('unavailable', 503),
+            RunPodProtocolError('wrong shape'),
+        ):
+            client = MagicMock()
+            client.get_pod.side_effect = error
+            with self.subTest(error=error), self.assertRaises(type(error)):
+                runtime._select_pod(self.manager, client, 'model')
+            client.find_pod_by_name.assert_not_called()
+
+    def test_missing_persisted_pod_allows_deliberate_replacement(self) -> None:
+        runtime._write_pod_id(self.manager, 'gone')
+        replacement = _pod('replacement')
+        client = MagicMock()
+        client.get_pod.side_effect = RunPodAPIError('not found', 404)
+        client.find_pod_by_name.return_value = replacement
+        self.assertEqual(
+            runtime._select_pod(self.manager, client, 'model'), replacement
+        )
+        self.assertEqual(
+            (self.manager.state_dir / 'runtime.pod-id').read_text(),
+            'replacement\n',
+        )
+
+    def test_down_stops_persisted_pod_and_retains_identity(self) -> None:
+        runtime._write_pod_id(self.manager, 'pod-1')
+        self.manager.load_config.return_value = {
+            'RUNPOD_API_KEY': 'key',
+            'RUNPOD_POD_NAME': 'model',
+        }
+        client = MagicMock()
+        client.get_pod.return_value = _pod()
+        systemctl = MagicMock()
+        systemctl.return_value.returncode = 0
+        with (
+            patch.object(runtime, 'ConfigManager', return_value=self.manager),
+            patch.object(runtime, 'RunPodClient', return_value=client),
+            patch.object(runtime, '_systemctl', systemctl),
+            patch(
+                'llm_coding.runtime.Path.home',
+                return_value=self.manager.state_dir / 'home',
+            ),
+        ):
+            runtime.down()  # type: ignore[no-untyped-call]
+        client.get_pod.assert_called_once_with('pod-1')
+        client.find_pod_by_name.assert_not_called()
+        client.stop_pod.assert_called_once_with('pod-1')
+        self.assertEqual(
+            (self.manager.state_dir / 'runtime.pod-id').read_text(),
+            'pod-1\n',
+        )
+
+
+if __name__ == '__main__':
+    unittest.main()

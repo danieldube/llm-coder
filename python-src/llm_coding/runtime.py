@@ -12,10 +12,11 @@ from typing import Any
 
 import requests
 
-from .core import ConfigManager, RunPodClient
+from .core import ConfigManager, RunPodAPIError, RunPodClient
 
 _ACTIVATION_FAILURE_FILE = 'runtime.activation-error'
 _ACTIVATION_STATUS_FILE = 'runtime.activation-status'
+_POD_STATE_FILE = 'runtime.pod-id'
 
 
 def _value(config: dict, key: str, default: str = '') -> str:
@@ -350,6 +351,70 @@ def _pod_create_body(
     return body
 
 
+def _read_pod_id(manager: ConfigManager) -> str | None:
+    """Read the previously selected pod ID, rejecting corrupt state."""
+    path = manager.state_dir / _POD_STATE_FILE
+    if not path.exists():
+        return None
+    try:
+        pod_id = path.read_text().strip()
+    except OSError as exc:
+        raise RuntimeError(
+            f'Cannot read persisted RunPod state at {path}'
+        ) from exc
+    if not pod_id or '\n' in pod_id or '\r' in pod_id:
+        raise RuntimeError(f'Persisted RunPod state at {path} is invalid')
+    return pod_id
+
+
+def _write_pod_id(manager: ConfigManager, pod_id: str) -> None:
+    """Atomically persist the selected pod ID with private permissions."""
+    path = manager.state_dir / _POD_STATE_FILE
+    temporary = path.with_name(path.name + '.tmp')
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        with os.fdopen(descriptor, 'w') as state_file:
+            state_file.write(pod_id + '\n')
+            state_file.flush()
+            os.fsync(state_file.fileno())
+        temporary.replace(path)
+        path.chmod(0o600)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError(
+            f'Cannot persist selected RunPod ID at {path}'
+        ) from exc
+
+
+def _forget_pod_id(manager: ConfigManager) -> None:
+    try:
+        (manager.state_dir / _POD_STATE_FILE).unlink(missing_ok=True)
+    except OSError as exc:
+        raise RuntimeError('Cannot clear persisted RunPod state') from exc
+
+
+def _select_pod(
+    manager: ConfigManager, client: RunPodClient, name: str
+) -> dict[str, Any] | None:
+    """Reconcile persisted identity, using names only for initial adoption."""
+    persisted_id = _read_pod_id(manager)
+    if persisted_id:
+        try:
+            return client.get_pod(persisted_id)
+        except RunPodAPIError as exc:
+            if exc.status_code != 404:
+                raise
+            _forget_pod_id(manager)
+    pod = client.find_pod_by_name(name)
+    if pod is not None:
+        _write_pod_id(manager, pod['id'])
+    return pod
+
+
 def _clear_activation_failure(manager):
     """Remove a previous activation error before a new runtime attempt."""
     try:
@@ -396,7 +461,7 @@ def up():
         fcntl.flock(lock, fcntl.LOCK_EX)
         _set_activation_status(manager, 'Checking the RunPod pod')
         client = RunPodClient(config['RUNPOD_API_KEY'])
-        pod = client.find_pod_by_name(config['RUNPOD_POD_NAME'])
+        pod = _select_pod(manager, client, config['RUNPOD_POD_NAME'])
         if pod is None:
             _set_activation_status(manager, 'Creating a RunPod pod')
             body = _pod_create_body(
@@ -404,6 +469,7 @@ def up():
                 key.with_suffix(key.suffix + '.pub').read_text().strip(),
             )
             pod_id = client.create_pod(body)
+            _write_pod_id(manager, pod_id)
         else:
             pod_id = pod['id']
             status = pod.get('desiredStatus')
@@ -581,9 +647,9 @@ def down():
         else:
             try:
                 client = RunPodClient(api_key)
-                pod = client.find_pod_by_name(pod_name)
+                pod = _select_pod(manager, client, pod_name)
                 if pod and pod.get('desiredStatus') == 'RUNNING':
-                    client._make_request('POST', f"/pods/{pod['id']}/stop")
+                    client.stop_pod(pod['id'])
             except (
                 requests.RequestException,
                 RuntimeError,
