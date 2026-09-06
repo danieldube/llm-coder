@@ -23,7 +23,7 @@ jq -e '
   and (.provider | keys == ["runpod"])
 ' "${ROOT}/config/opencode.base.json" >/dev/null
 
-rg -F -- '--enable-log-requests' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- '--enable-log-requests' "${ROOT}/docker/start-vllm.sh" >/dev/null
 
 if command -v shellcheck >/dev/null 2>&1; then
     mapfile -t scripts < <(find_scripts)
