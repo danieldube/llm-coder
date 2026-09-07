@@ -60,15 +60,7 @@ _RELEASE_ARTIFACTS: dict[str, dict[tuple[str, str], _ReleaseArtifact]] = {
 }
 
 
-def _value(
-    config: Settings | dict[str, str], name: str, default: Any = ''
-) -> Any:
-    if isinstance(config, dict):
-        return config.get(name.upper(), default)
-    return getattr(config, name)
-
-
-def create_config(config: Settings | dict[str, str], state_dir: Path) -> Path:
+def create_config(config: Settings, state_dir: Path) -> Path:
     """Render the generated OpenCode configuration."""
     try:
         value = json.loads(
@@ -94,17 +86,17 @@ def create_config(config: Settings | dict[str, str], state_dir: Path) -> Path:
             'a JSON object; reinstall llm-coding'
         )
     output: dict[str, Any] = value
-    output['model'] = f'runpod/{_value(config, "served_model_name")}'
+    output['model'] = f'runpod/{config.served_model_name}'
     provider = output['provider']['runpod']
     provider['options']['baseURL'] = (
-        f'http://127.0.0.1:{_value(config, "local_proxy_port")}/v1'
+        f'http://127.0.0.1:{config.local_proxy_port}/v1'
     )
     provider['models'] = {
-        _value(config, 'served_model_name'): {
-            'name': _value(config, 'model_display_name'),
+        config.served_model_name: {
+            'name': config.model_display_name,
             'limit': {
-                'context': int(_value(config, 'context_size')),
-                'output': int(_value(config, 'max_output_tokens')),
+                'context': config.context_size,
+                'output': config.max_output_tokens,
             },
         }
     }
@@ -131,7 +123,7 @@ def _write_acp_configuration(path: Path, acp: dict[str, Any]) -> None:
     atomic_write_private(path, json.dumps(acp, indent=2) + '\n')
 
 
-def ensure_acp_registration(config: Settings | dict[str, str]) -> None:
+def ensure_acp_registration(config: Settings) -> None:
     """Register the ACP server while preserving unrelated agents."""
     path = Path.home() / '.jetbrains' / 'acp.json'
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,15 +142,9 @@ def ensure_acp_registration(config: Settings | dict[str, str]) -> None:
                     f'JetBrains ACP configuration at {path} has invalid '
                     'sections'
                 )
-            defaults['use_idea_mcp'] = bool(
-                _value(config, 'enable_idea_mcp', True)
-            )
-            defaults['use_custom_mcp'] = bool(
-                _value(config, 'enable_custom_mcp', False)
-            )
-            servers[
-                _value(config, 'jetbrains_agent_name', 'OpenCode RunPod')
-            ] = {
+            defaults['use_idea_mcp'] = config.enable_idea_mcp
+            defaults['use_custom_mcp'] = config.enable_custom_mcp
+            servers[config.jetbrains_agent_name] = {
                 'command': str(
                     Path(sys.argv[0]).resolve().parent / 'opencode-runpod'
                 ),
@@ -175,7 +161,7 @@ def ensure_acp_registration(config: Settings | dict[str, str]) -> None:
         ) from exc
 
 
-def remove_acp_registration(config: Settings | dict[str, str]) -> None:
+def remove_acp_registration(config: Settings) -> None:
     """Remove only this installation's ACP registration."""
     path = Path.home() / '.jetbrains' / 'acp.json'
     try:
@@ -192,14 +178,7 @@ def remove_acp_registration(config: Settings | dict[str, str]) -> None:
                     f'{path} has invalid content'
                 )
             if (
-                acp['agent_servers'].pop(
-                    _value(
-                        config,
-                        'jetbrains_agent_name',
-                        'OpenCode RunPod',
-                    ),
-                    None,
-                )
+                acp['agent_servers'].pop(config.jetbrains_agent_name, None)
                 is None
             ):
                 return

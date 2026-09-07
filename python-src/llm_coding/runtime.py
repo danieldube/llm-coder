@@ -153,11 +153,7 @@ def _start_pod_or_raise(
             raise
         storage = (
             'This pod uses a detachable network volume, so it can be recreated without losing the volume contents.'  # noqa: E501
-            if (
-                config.get('RUNPOD_NETWORK_VOLUME_ID', '')
-                if isinstance(config, dict)
-                else config.runpod_network_volume_id
-            )
+            if config.runpod_network_volume_id
             else 'This pod uses pod-local storage (RUNPOD_NETWORK_VOLUME_ID is empty); deleting it can discard the cached model and files in /workspace.'  # noqa: E501
         )
         raise RuntimeError(
@@ -198,8 +194,6 @@ def _create_pod_or_raise(
 def _select_pod(
     state: RuntimeState, client: PodProvider, name: str
 ) -> dict[str, Any] | None:
-    if hasattr(state, 'state_dir'):
-        state = FileStateStore(Path(state.state_dir))
     persisted_id = state.read_pod_id()
     if persisted_id:
         try:
@@ -212,18 +206,6 @@ def _select_pod(
     if pod is not None:
         state.write_pod_id(str(pod['id']))
     return pod
-
-
-def _read_pod_id(manager: ConfigManager) -> str | None:
-    return FileStateStore(manager.state_dir).read_pod_id()
-
-
-def _write_pod_id(manager: ConfigManager, pod_id: str) -> None:
-    FileStateStore(manager.state_dir).write_pod_id(pod_id)
-
-
-def _forget_pod_id(manager: ConfigManager) -> None:
-    FileStateStore(manager.state_dir).forget_pod_id()
 
 
 def up(

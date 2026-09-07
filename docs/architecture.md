@@ -159,6 +159,30 @@ HTTP readiness probes still use `requests` directly; tests mock those calls.
 Packaged assets under `python-src/llm_coding/assets/` supply installed runtime
 resources and are the canonical copies used from a source checkout and a wheel.
 
+### Compatibility inventory
+
+An in-repository caller audit found that the installed CLI was the only
+operational caller importing through `core.py`; it now imports each focused
+owner directly. Tests also import focused owners. `core.py` remains public only
+as a compatibility facade for downstream Python imports of its historical
+exports.
+
+The audit found no callers of `config.setting()`. The `runpod._value()` and
+`opencode._value()` helpers were private, module-local mapping shims. The
+dictionary branch in `runtime._start_pod_or_raise()` had no caller, while the
+`hasattr(state, "state_dir")` branch in `runtime._select_pod()` was exercised
+only by tests passing a mock `ConfigManager`. These shims have been removed:
+operational functions require `Settings`, and Pod selection requires an
+explicit `RuntimeState` implementation such as `FileStateStore`.
+
+For downstream code that still combines `ConfigManager.load_config()` with
+the historical `core.create_opencode_config()` export, `core.py` performs the
+sole legacy mapping conversion through `LegacySettingsAdapter`. The adapter
+runs full settings validation and constructs `Settings`. Passing a mapping to
+that facade emits `DeprecationWarning`; downstream callers should migrate to
+`ConfigManager.load_settings()` and pass `Settings` directly. No focused
+operational module accepts legacy mappings.
+
 ## Status contract
 
 `llm-status` inspects `LoadState`, `ActiveState`, and `SubState`, looks up the

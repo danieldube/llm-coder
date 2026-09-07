@@ -14,13 +14,9 @@ from pathlib import Path
 import click
 import requests
 
-from .config import Settings
-from .core import (
-    ConfigManager,
-    check_dependencies,
-    create_opencode_config,
-    fatal,
-)
+from .config import ConfigManager, Settings
+from .core import check_dependencies, fatal
+from .opencode import create_config as create_opencode_config
 from .opencode import launch as launch_opencode
 from .runtime import _startup_timeout_seconds, ensure_socket
 from .runtime import down as runtime_down

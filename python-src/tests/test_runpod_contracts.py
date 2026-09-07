@@ -12,15 +12,23 @@ from unittest.mock import MagicMock, patch
 
 import requests
 from llm_coding import runtime
-from llm_coding.core import (
-    RunPodAPIError,
-    RunPodClient,
-    RunPodProtocolError,
-)
+from llm_coding.config import Settings
+from llm_coding.runpod import RunPodAPIError, RunPodClient, RunPodProtocolError
+from llm_coding.state import FileStateStore
 
 
 def _pod(pod_id: str = 'pod-1', name: str = 'model') -> dict[str, str]:
     return {'id': pod_id, 'name': name, 'desiredStatus': 'RUNNING'}
+
+
+def _settings(root: Path) -> Settings:
+    return Settings(
+        runpod_api_key='key',
+        runpod_ssh_key=root / 'id_ed25519',
+        runpod_pod_name='model',
+        runpod_image='image',
+        runpod_gpu_type='gpu',
+    )
 
 
 class TestRunPodContracts(unittest.TestCase):
@@ -171,6 +179,7 @@ class TestPersistedPodIdentity(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.manager = MagicMock()
         self.manager.state_dir = Path(self.temporary.name)
+        self.state = FileStateStore(self.manager.state_dir)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -179,11 +188,11 @@ class TestPersistedPodIdentity(unittest.TestCase):
         client = MagicMock()
         client.find_pod_by_name.return_value = _pod()
         self.assertEqual(
-            runtime._select_pod(self.manager, client, 'model'), _pod()
+            runtime._select_pod(self.state, client, 'model'), _pod()
         )
         client.get_pod.return_value = _pod()
         self.assertEqual(
-            runtime._select_pod(self.manager, client, 'model'), _pod()
+            runtime._select_pod(self.state, client, 'model'), _pod()
         )
         client.find_pod_by_name.assert_called_once_with('model')
         self.assertEqual(client.get_pod.call_count, 1)
@@ -195,7 +204,7 @@ class TestPersistedPodIdentity(unittest.TestCase):
         client = MagicMock()
         client.find_pod_by_name.side_effect = ValueError('ambiguous')
         with self.assertRaisesRegex(ValueError, 'ambiguous'):
-            runtime._select_pod(self.manager, client, 'model')
+            runtime._select_pod(self.state, client, 'model')
         self.assertFalse((self.manager.state_dir / 'runtime.pod-id').exists())
 
     def test_failed_atomic_write_removes_temporary_state(self) -> None:
@@ -206,14 +215,14 @@ class TestPersistedPodIdentity(unittest.TestCase):
             ),
             self.assertRaisesRegex(RuntimeError, 'Cannot persist'),
         ):
-            runtime._write_pod_id(self.manager, 'pod-1')
+            self.state.write_pod_id('pod-1')
 
         self.assertEqual(
             list(self.manager.state_dir.glob('.runtime.pod-id.*.tmp')), []
         )
 
     def test_api_or_protocol_failure_does_not_fall_back_to_name(self) -> None:
-        runtime._write_pod_id(self.manager, 'pod-1')
+        self.state.write_pod_id('pod-1')
         for error in (
             RunPodAPIError('unavailable', 503),
             RunPodProtocolError('wrong shape'),
@@ -221,17 +230,17 @@ class TestPersistedPodIdentity(unittest.TestCase):
             client = MagicMock()
             client.get_pod.side_effect = error
             with self.subTest(error=error), self.assertRaises(type(error)):
-                runtime._select_pod(self.manager, client, 'model')
+                runtime._select_pod(self.state, client, 'model')
             client.find_pod_by_name.assert_not_called()
 
     def test_missing_persisted_pod_allows_deliberate_replacement(self) -> None:
-        runtime._write_pod_id(self.manager, 'gone')
+        self.state.write_pod_id('gone')
         replacement = _pod('replacement')
         client = MagicMock()
         client.get_pod.side_effect = RunPodAPIError('not found', 404)
         client.find_pod_by_name.return_value = replacement
         self.assertEqual(
-            runtime._select_pod(self.manager, client, 'model'), replacement
+            runtime._select_pod(self.state, client, 'model'), replacement
         )
         self.assertEqual(
             (self.manager.state_dir / 'runtime.pod-id').read_text(),
@@ -239,9 +248,9 @@ class TestPersistedPodIdentity(unittest.TestCase):
         )
 
     def test_down_stops_persisted_pod_and_retains_identity(self) -> None:
-        runtime._write_pod_id(self.manager, 'pod-1')
-        self.manager.load_settings.return_value = SimpleNamespace(
-            runpod_api_key='key', runpod_pod_name='model'
+        self.state.write_pod_id('pod-1')
+        self.manager.load_settings.return_value = _settings(
+            self.manager.state_dir
         )
         client = MagicMock()
         client.get_pod.return_value = _pod()

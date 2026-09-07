@@ -12,18 +12,19 @@ from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 from llm_coding import runtime
-from llm_coding.config import Settings
-from llm_coding.core import RunPodAPIError
+from llm_coding.config import ConfigurationError, Settings
+from llm_coding.core import LegacySettingsAdapter, create_opencode_config
 from llm_coding.opencode import (
     create_config,
     ensure_acp_registration,
     launch,
     remove_acp_registration,
 )
-from llm_coding.runpod import pod_create_body
+from llm_coding.runpod import RunPodAPIError, pod_create_body
 from llm_coding.ssh import (
     command,
     is_host_key_mismatch,
@@ -51,6 +52,43 @@ def settings(root: Path) -> Settings:
 
 
 class FocusedModuleTests(unittest.TestCase):
+    def test_legacy_settings_adapter_validates_and_constructs_settings(
+        self,
+    ) -> None:
+        legacy = {
+            field.upper(): str(value).lower()
+            if isinstance(value, bool)
+            else str(value)
+            for field, value in vars(settings(Path('/keys'))).items()
+        }
+
+        adapted = LegacySettingsAdapter(legacy).to_settings()
+
+        self.assertEqual(adapted, settings(Path('/keys')))
+
+    def test_legacy_settings_adapter_rejects_non_string_values(self) -> None:
+        legacy = cast(dict[str, str], {'RUNPOD_API_KEY': 42})
+        try:
+            LegacySettingsAdapter(legacy).to_settings()
+        except ConfigurationError as exc:
+            self.assertIn('keys and values must be strings', str(exc))
+        else:
+            self.fail('Expected invalid legacy mapping to be rejected')
+
+    def test_core_mapping_entrypoint_is_deprecated(self) -> None:
+        legacy = {
+            field.upper(): str(value).lower()
+            if isinstance(value, bool)
+            else str(value)
+            for field, value in vars(settings(Path('/keys'))).items()
+        }
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            self.assertWarns(DeprecationWarning),
+        ):
+            path = create_opencode_config(legacy, Path(temporary))
+            self.assertTrue(path.is_file())
+
     def test_public_key_path_appends_pub_to_complete_filename(self) -> None:
         cases = {
             Path('/keys/id_ed25519'): Path('/keys/id_ed25519.pub'),

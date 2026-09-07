@@ -59,11 +59,10 @@ class TestArchitectureBoundaries(unittest.TestCase):
         self.assertNotIn('StrictHostKeyChecking=', _source(runtime))
 
     def test_core_is_only_a_compatibility_facade(self) -> None:
-        self.assertTrue(
-            {'RunPodClient', 'create_opencode_config'}.isdisjoint(
-                _definitions(core)
-            )
-        )
+        definitions = _definitions(core)
+        self.assertNotIn('RunPodClient', definitions)
+        self.assertNotIn('create_config', definitions)
+        self.assertIn('create_opencode_config', definitions)
 
     def test_runtime_is_orchestration_only(self) -> None:
         forbidden = {
