@@ -1,5 +1,6 @@
 """OpenCode installation, configuration, and JetBrains ACP integration."""
 
+import fcntl
 import hashlib
 import importlib.resources
 import json
@@ -12,6 +13,8 @@ import tarfile
 import tempfile
 import threading
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -20,6 +23,7 @@ import requests
 
 from .config import Settings
 from .interfaces import CommandRunner
+from .state import atomic_write_private
 
 _RELEASE_BASE_URL = 'https://github.com/anomalyco/opencode/releases/download'
 _DOWNLOAD_LIMIT = 100 * 1024 * 1024
@@ -105,8 +109,26 @@ def create_config(config: Settings | dict[str, str], state_dir: Path) -> Path:
         }
     }
     path = state_dir / 'opencode.json'
-    path.write_text(json.dumps(output, indent=2))
+    atomic_write_private(path, json.dumps(output, indent=2))
     return path
+
+
+@contextmanager
+def _acp_configuration_lock(path: Path) -> Iterator[None]:
+    """Serialize cooperative readers and writers of the shared ACP file."""
+    lock_path = path.with_name(f'.{path.name}.llm-coding.lock')
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _write_acp_configuration(path: Path, acp: dict[str, Any]) -> None:
+    """Durably replace the shared ACP configuration with private content."""
+    atomic_write_private(path, json.dumps(acp, indent=2) + '\n')
 
 
 def ensure_acp_registration(config: Settings | dict[str, str]) -> None:
@@ -114,32 +136,39 @@ def ensure_acp_registration(config: Settings | dict[str, str]) -> None:
     path = Path.home() / '.jetbrains' / 'acp.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        acp = json.loads(path.read_text()) if path.exists() else {}
-    except (OSError, json.JSONDecodeError) as exc:
+        with _acp_configuration_lock(path):
+            acp = json.loads(path.read_text()) if path.exists() else {}
+            if not isinstance(acp, dict):
+                raise RuntimeError(
+                    f'JetBrains ACP configuration at {path} must be a JSON '
+                    'object'
+                )
+            defaults = acp.setdefault('default_mcp_settings', {})
+            servers = acp.setdefault('agent_servers', {})
+            if not isinstance(defaults, dict) or not isinstance(servers, dict):
+                raise RuntimeError(
+                    f'JetBrains ACP configuration at {path} has invalid '
+                    'sections'
+                )
+            defaults['use_idea_mcp'] = bool(
+                _value(config, 'enable_idea_mcp', True)
+            )
+            defaults['use_custom_mcp'] = bool(
+                _value(config, 'enable_custom_mcp', False)
+            )
+            servers[
+                _value(config, 'jetbrains_agent_name', 'OpenCode RunPod')
+            ] = {
+                'command': str(
+                    Path(sys.argv[0]).resolve().parent / 'opencode-runpod'
+                ),
+                'args': ['acp'],
+            }
+            _write_acp_configuration(path, acp)
+    except json.JSONDecodeError as exc:
         raise RuntimeError(
             f'Cannot read JetBrains ACP configuration at {path}'
         ) from exc
-    if not isinstance(acp, dict):
-        raise RuntimeError(
-            f'JetBrains ACP configuration at {path} must be a JSON object'
-        )
-    defaults = acp.setdefault('default_mcp_settings', {})
-    servers = acp.setdefault('agent_servers', {})
-    if not isinstance(defaults, dict) or not isinstance(servers, dict):
-        raise RuntimeError(
-            f'JetBrains ACP configuration at {path} has invalid sections'
-        )
-    defaults['use_idea_mcp'] = bool(_value(config, 'enable_idea_mcp', True))
-    defaults['use_custom_mcp'] = bool(
-        _value(config, 'enable_custom_mcp', False)
-    )
-    servers[_value(config, 'jetbrains_agent_name', 'OpenCode RunPod')] = {
-        'command': str(Path(sys.argv[0]).resolve().parent / 'opencode-runpod'),
-        'args': ['acp'],
-    }
-    try:
-        path.write_text(json.dumps(acp, indent=2) + '\n')
-        path.chmod(0o600)
     except OSError as exc:
         raise RuntimeError(
             f'Cannot update JetBrains ACP configuration at {path}'
@@ -149,36 +178,35 @@ def ensure_acp_registration(config: Settings | dict[str, str]) -> None:
 def remove_acp_registration(config: Settings | dict[str, str]) -> None:
     """Remove only this installation's ACP registration."""
     path = Path.home() / '.jetbrains' / 'acp.json'
-    if not path.exists():
-        return
     try:
-        acp = json.loads(path.read_text())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _acp_configuration_lock(path):
+            if not path.exists():
+                return
+            acp = json.loads(path.read_text())
+            if not isinstance(acp, dict) or not isinstance(
+                acp.get('agent_servers', {}), dict
+            ):
+                raise RuntimeError(
+                    'Cannot remove the CLion OpenCode entry: '
+                    f'{path} has invalid content'
+                )
+            if (
+                acp['agent_servers'].pop(
+                    _value(
+                        config,
+                        'jetbrains_agent_name',
+                        'OpenCode RunPod',
+                    ),
+                    None,
+                )
+                is None
+            ):
+                return
+            _write_acp_configuration(path, acp)
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             f'Cannot remove the CLion OpenCode entry: repair {path} and rerun integration removal'  # noqa: E501
-        ) from exc
-    if not isinstance(acp, dict) or not isinstance(
-        acp.get('agent_servers', {}), dict
-    ):
-        raise RuntimeError(
-            f'Cannot remove the CLion OpenCode entry: {path} has invalid content'  # noqa: E501
-        )
-    if (
-        acp['agent_servers'].pop(
-            _value(config, 'jetbrains_agent_name', 'OpenCode RunPod'), None
-        )
-        is None
-    ):
-        return
-    temporary = path.with_name(path.name + '.llm-coding.tmp')
-    try:
-        temporary.write_text(json.dumps(acp, indent=2) + '\n')
-        temporary.chmod(0o600)
-        temporary.replace(path)
-    except OSError as exc:
-        temporary.unlink(missing_ok=True)
-        raise RuntimeError(
-            f'Cannot update {path}; check that it is writable and rerun integration removal'  # noqa: E501
         ) from exc
 
 

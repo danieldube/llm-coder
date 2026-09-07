@@ -126,13 +126,15 @@ See [configuration paths](configuration.md#paths) for XDG locations.
 | `runtime.activation-error` | Best-effort startup failure, mode 0600 | No |
 | `opencode.json` | Generated provider and permission configuration | Unless integration is removed |
 
-Only identity and SSH endpoint writes use atomic replacement. Directory modes,
-`runtime.env`, and generated OpenCode file modes depend on the user's umask.
-Activation diagnostics are best-effort and are not a durable audit log.
+Identity, SSH endpoint, generated OpenCode, and JetBrains ACP writes use atomic
+replacement with mode 0600. Directory modes and `runtime.env` depend on the
+user's umask. Activation diagnostics are best-effort and are not a durable
+audit log.
 
-ACP registration writes `~/.jetbrains/acp.json`, preserves other agent entries,
-and updates the shared `default_mcp_settings`. IDEA MCP defaults to enabled;
-custom MCP defaults to disabled. These defaults can affect other ACP agents.
+ACP registration locks and writes `~/.jetbrains/acp.json`, preserves other agent
+entries, and updates the shared `default_mcp_settings`. IDEA MCP defaults to
+enabled; custom MCP defaults to disabled. These defaults can affect other ACP
+agents.
 OpenCode configuration is regenerated on wrapper launch and successful
 `llm-up`; edit the templates or settings instead of generated files.
 
