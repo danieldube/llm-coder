@@ -114,16 +114,29 @@ def user_units_dir() -> Path:
     )
 
 
+def escape_unit_argument(argument: str) -> str:
+    """Quote one argument using systemd's unit command-line syntax."""
+    if not argument or not argument.isprintable():
+        raise ValueError(
+            'systemd unit arguments must be nonempty and printable'
+        )
+    escaped = (
+        argument.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
+    )
+    return f'"{escaped}"'
+
+
 def render_units(config: Settings) -> dict[str, str]:
-    runtime = runtime_command()
-    proxy = (
+    runtime = escape_unit_argument(runtime_command())
+    proxy_path = (
         shutil.which('systemd-socket-proxyd')
         or '/usr/lib/systemd/systemd-socket-proxyd'
     )
-    if not Path(proxy).exists():
+    if not Path(proxy_path).exists():
         raise RuntimeError(
             'systemd-socket-proxyd is required but was not found'
         )
+    proxy = escape_unit_argument(proxy_path)
     return {
         'llm-coding.socket': f'[Unit]\nDescription=On-demand self-hosted LLM endpoint\n\n[Socket]\nListenStream=127.0.0.1:{config.local_proxy_port}\nNoDelay=true\nService=llm-coding-proxy.service\n\n[Install]\nWantedBy=sockets.target\n',  # noqa: E501
         'llm-coding-proxy.service': f'[Unit]\nDescription=On-demand RunPod LLM proxy\nRequires=llm-coding.socket\nAfter=network-online.target llm-coding.socket\n\n[Service]\nType=notify\nExecStartPre={runtime} up\nExecStart={proxy} --exit-idle-time={config.idle_shutdown} 127.0.0.1:{config.local_tunnel_port}\nExecStopPost={runtime} down\nTimeoutStartSec={config.startup_timeout_seconds}s\nTimeoutStopSec=3min\n',  # noqa: E501

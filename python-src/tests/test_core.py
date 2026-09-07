@@ -26,7 +26,7 @@ from llm_coding.ssh import (
     public_key_path,
 )
 from llm_coding.state import FileStateStore, atomic_write_private
-from llm_coding.systemd import render_units
+from llm_coding.systemd import escape_unit_argument, render_units
 
 
 def settings(root: Path) -> Settings:
@@ -327,6 +327,44 @@ class FocusedModuleTests(unittest.TestCase):
         self.assertIn(
             'TimeoutStartSec=3120s', units['llm-coding-proxy.service']
         )
+
+    def test_systemd_units_escape_executable_paths(self) -> None:
+        cases = {
+            '/opt/llm coding/runtime': '"/opt/llm coding/runtime"',
+            '/opt/llm%coding/runtime': '"/opt/llm%%coding/runtime"',
+            '/opt/llm\\coding/runtime': '"/opt/llm\\\\coding/runtime"',
+            '/opt/llm"coding/runtime': '"/opt/llm\\"coding/runtime"',
+        }
+
+        for path, escaped in cases.items():
+            with (
+                self.subTest(path=path),
+                patch('llm_coding.systemd.runtime_command', return_value=path),
+                patch('llm_coding.systemd.shutil.which', return_value=path),
+                patch('llm_coding.systemd.Path.exists', return_value=True),
+            ):
+                units = render_units(settings(Path('/tmp')))
+            proxy = units['llm-coding-proxy.service']
+            tunnel = units['llm-coding-tunnel.service']
+            self.assertIn(f'ExecStartPre={escaped} up', proxy)
+            self.assertIn(f'ExecStart={escaped} --exit-idle-time=', proxy)
+            self.assertIn(f'ExecStopPost={escaped} down', proxy)
+            self.assertIn(f'ExecStart={escaped} tunnel', tunnel)
+            self.assertIn(
+                'ListenStream=127.0.0.1:18000',
+                units['llm-coding.socket'],
+            )
+            self.assertIn('127.0.0.1:18001', proxy)
+
+    def test_systemd_argument_rejects_unrepresentable_paths(self) -> None:
+        for path in ('', '/opt/llm\nruntime', '/opt/llm\0runtime'):
+            with self.subTest(path=path):
+                try:
+                    escape_unit_argument(path)
+                except ValueError:
+                    pass
+                else:
+                    self.fail('Expected unrepresentable path to fail')
 
     def test_opencode_config_uses_local_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
