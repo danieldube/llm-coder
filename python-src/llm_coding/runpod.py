@@ -8,15 +8,6 @@ import requests
 from .config import Settings
 from .interfaces import HTTPTransport
 
-
-def _value(
-    config: Settings | dict[str, str], name: str, default: Any = None
-) -> Any:
-    if isinstance(config, dict):
-        return config.get(name.upper(), default)
-    return getattr(config, name)
-
-
 JSONResult = dict[str, Any] | list[Any]
 
 
@@ -191,37 +182,31 @@ class RunPodClient:
         return RunPodEndpoint(host, port)
 
 
-def pod_create_body(
-    config: Settings | dict[str, str], public_key: str
-) -> dict[str, Any]:
+def pod_create_body(config: Settings, public_key: str) -> dict[str, Any]:
     """Build the provider create request without credential leakage."""
     body: dict[str, Any] = {
-        'name': _value(config, 'runpod_pod_name'),
-        'imageName': _value(config, 'runpod_image'),
-        'cloudType': _value(config, 'runpod_cloud_type', 'SECURE'),
+        'name': config.runpod_pod_name,
+        'imageName': config.runpod_image,
+        'cloudType': config.runpod_cloud_type,
         'computeType': 'GPU',
-        'gpuTypeIds': [_value(config, 'runpod_gpu_type')],
+        'gpuTypeIds': [config.runpod_gpu_type],
         'gpuTypePriority': 'availability',
         'gpuCount': 1,
         'interruptible': False,
         'supportPublicIp': True,
-        'containerDiskInGb': int(
-            _value(config, 'runpod_container_disk_gb', 40)
-        ),
-        'volumeMountPath': str(
-            _value(config, 'runpod_volume_mount_path', '/workspace')
-        ),
-        'minRAMPerGPU': int(_value(config, 'runpod_min_ram_per_gpu', 48)),
-        'minVCPUPerGPU': int(_value(config, 'runpod_min_vcpu_per_gpu', 8)),
+        'containerDiskInGb': config.runpod_container_disk_gb,
+        'volumeMountPath': str(config.runpod_volume_mount_path),
+        'minRAMPerGPU': config.runpod_min_ram_per_gpu,
+        'minVCPUPerGPU': config.runpod_min_vcpu_per_gpu,
         'ports': ['22/tcp'],
         'env': {'SSH_PUBLIC_KEY': public_key},
     }
-    if _value(config, 'runpod_container_registry_auth_id', ''):
-        body['containerRegistryAuthId'] = _value(
-            config, 'runpod_container_registry_auth_id', ''
+    if config.runpod_container_registry_auth_id:
+        body['containerRegistryAuthId'] = (
+            config.runpod_container_registry_auth_id
         )
-    volume = _value(config, 'runpod_network_volume_id', '')
-    body['networkVolumeId' if volume else 'volumeInGb'] = volume or int(
-        _value(config, 'runpod_volume_gb', 100)
+    volume = config.runpod_network_volume_id
+    body['networkVolumeId' if volume else 'volumeInGb'] = (
+        volume or config.runpod_volume_gb
     )
     return body

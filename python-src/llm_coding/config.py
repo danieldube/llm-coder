@@ -276,10 +276,3 @@ class ConfigManager:
         if errors:
             raise ConfigurationError(errors)
         return values
-
-
-def setting(config: Settings | Mapping[str, str], name: str) -> object:
-    """Read a typed setting while supporting the legacy mapping API."""
-    if isinstance(config, Mapping):
-        return config[name.upper()]
-    return getattr(config, name)
