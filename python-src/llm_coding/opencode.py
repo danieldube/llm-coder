@@ -21,6 +21,7 @@ from typing import Any
 
 import requests
 
+from .command import run_command
 from .config import Settings
 from .interfaces import CommandRunner
 from .state import atomic_write_private
@@ -383,9 +384,13 @@ def launch(config: Settings, state_dir: Path, args: list[str]) -> None:
     )
 
     def report_prewarm_failure() -> None:
-        _, stderr = prewarm.communicate()
-        if prewarm.returncode and stderr:
-            print(stderr, file=sys.stderr, end='')
+        prewarm.communicate()
+        if prewarm.returncode:
+            print(
+                f'OpenCode prewarm failed (exit code {prewarm.returncode}); '
+                'run llm-up for details.',
+                file=sys.stderr,
+            )
 
     threading.Thread(target=report_prewarm_failure, daemon=True).start()
-    subprocess.run([str(binary), *args], check=True)
+    run_command([str(binary), *args])

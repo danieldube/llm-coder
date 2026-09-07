@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 import requests
 
+from .command import run_command
 from .config import ConfigManager, Settings
 from .interfaces import (
     Clock,
@@ -42,7 +43,7 @@ from .state import (
     FileStateStore,
     lifecycle_lock,
 )
-from .systemd import Systemd, run_command
+from .systemd import Systemd
 from .systemd import ensure_socket as systemd_ensure_socket
 from .systemd import install as systemd_install
 from .vllm import VLLMProtocolError, VLLMStatusError, response_model_ids
