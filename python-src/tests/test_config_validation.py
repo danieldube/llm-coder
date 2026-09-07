@@ -64,6 +64,36 @@ class TestConfigValidation(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ConfigurationError):
                 self.parse({key: value})
 
+    def test_gpu_memory_utilization_must_be_finite(self) -> None:
+        for value in ('nan', 'NaN', 'inf', '-inf', '1e309'):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(ConfigurationError) as raised,
+            ):
+                self.parse({'VLLM_GPU_MEMORY_UTILIZATION': value})
+            self.assertEqual(
+                raised.exception.errors,
+                ('VLLM_GPU_MEMORY_UTILIZATION must be a finite number',),
+            )
+
+    def test_gpu_memory_utilization_range_boundaries(self) -> None:
+        with self.assertRaises(ConfigurationError) as raised:
+            self.parse({'VLLM_GPU_MEMORY_UTILIZATION': '0'})
+        self.assertEqual(
+            raised.exception.errors,
+            (
+                'VLLM_GPU_MEMORY_UTILIZATION must be greater than 0 '
+                'and at most 1',
+            ),
+        )
+
+        for value in ('5e-324', '1'):
+            with self.subTest(value=value):
+                settings = self.parse({'VLLM_GPU_MEMORY_UTILIZATION': value})
+                self.assertEqual(
+                    settings.vllm_gpu_memory_utilization, float(value)
+                )
+
     def test_boundaries_relationships_and_defaults(self) -> None:
         settings = self.parse(
             {

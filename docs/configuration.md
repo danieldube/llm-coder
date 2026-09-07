@@ -74,7 +74,7 @@ SSH startup integration.
 | `MODEL_REVISION` | Empty | Example pins a model commit; pin a valid revision for reproducibility |
 | `CONTEXT_SIZE` | `65536` | 1–10,000,000 tokens; vLLM context and OpenCode context limit |
 | `MAX_OUTPUT_TOKENS` | `16384` | 1–10,000,000, at most context; OpenCode model metadata only |
-| `VLLM_GPU_MEMORY_UTILIZATION` | `0.92` | Greater than 0, at most 1 |
+| `VLLM_GPU_MEMORY_UTILIZATION` | `0.92` | Finite number greater than 0 and at most 1 |
 | `VLLM_TOOL_CALL_PARSER` | `qwen3_xml` | Passed directly to vLLM; parser availability is not validated |
 | `REMOTE_VLLM_PORT` | `8000` | 1–65535; remote loopback listener |
 | `LOCAL_PROXY_PORT` | `18000` | 1–65535; stable host endpoint |
