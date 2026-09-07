@@ -13,6 +13,11 @@ from .state import atomic_write_private
 ENDPOINT_STATE_FILE = 'runtime.ssh-endpoint.json'
 
 
+def public_key_path(private_key: Path) -> Path:
+    """Return the public-key path paired with ``private_key``."""
+    return private_key.with_name(private_key.name + '.pub')
+
+
 def _known_hosts(state_dir: Path) -> Path:
     path = state_dir / 'known_hosts'
     path.touch(mode=0o600, exist_ok=True)

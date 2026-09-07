@@ -26,6 +26,7 @@ from .runtime import _startup_timeout_seconds, ensure_socket
 from .runtime import down as runtime_down
 from .runtime import install as runtime_install
 from .runtime import remove_integration as runtime_remove_integration
+from .ssh import public_key_path
 from .status import ProviderState, inspect_provider, inspect_runtime
 from .systemd import inspect_unit
 from .vllm import (
@@ -605,10 +606,7 @@ def llm_doctor(activate: bool) -> None:
     ssh_key_path = Path(
         os.path.expandvars(os.path.expanduser(str(config.runpod_ssh_key)))
     )
-    if (
-        not ssh_key_path.exists()
-        or not (ssh_key_path.with_suffix('.pub')).exists()
-    ):
+    if not ssh_key_path.exists() or not public_key_path(ssh_key_path).exists():
         fatal('Dedicated RunPod SSH key is missing')
     print('RunPod SSH key')
 
