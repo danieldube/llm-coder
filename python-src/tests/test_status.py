@@ -5,11 +5,17 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import requests
 from llm_coding.config import Settings
 from llm_coding.runpod import RunPodAPIError, RunPodProtocolError
-from llm_coding.status import ProviderState, inspect_provider
+from llm_coding.status import (
+    EndpointState,
+    ProviderState,
+    _inspect_endpoint,
+    inspect_provider,
+)
 
 
 def _settings() -> Settings:
@@ -84,3 +90,30 @@ class TestProviderStatus(unittest.TestCase):
                 result = inspect_provider(_settings(), self.state_dir, client)
                 self.assertEqual(result.state, ProviderState.AVAILABLE)
                 self.assertEqual(result.lifecycle, lifecycle)
+
+
+class TestEndpointStatus(unittest.TestCase):
+    def test_http_errors_are_never_healthy(self) -> None:
+        for status_code in (400, 503):
+            for body_kind in ('json', 'non-json'):
+                with self.subTest(
+                    status_code=status_code, body_kind=body_kind
+                ):
+                    response = MagicMock()
+                    response.status_code = status_code
+                    response.text = (
+                        '{"data": [{"id": "model"}]}'
+                        if body_kind == 'json'
+                        else 'service unavailable'
+                    )
+                    response.raise_for_status.side_effect = requests.HTTPError(
+                        str(status_code)
+                    )
+                    with patch(
+                        'llm_coding.status.requests.get',
+                        return_value=response,
+                    ):
+                        result = _inspect_endpoint(18001)
+
+                    self.assertEqual(result, EndpointState.UNREACHABLE)
+                    response.raise_for_status.assert_called_once_with()

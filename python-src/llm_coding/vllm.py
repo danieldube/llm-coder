@@ -4,15 +4,39 @@ import json
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+import requests
+
 
 class VLLMProtocolError(RuntimeError):
     """Raised when vLLM returns a malformed model-list response."""
 
 
+class VLLMStatusError(RuntimeError):
+    """Raised when vLLM returns an unsuccessful HTTP status."""
+
+
 class JSONResponse(Protocol):
-    """The response behavior needed by :func:`response_model_ids`."""
+    """The response behavior needed by :func:`response_json`."""
+
+    status_code: int
 
     def json(self) -> Any: ...
+
+    def raise_for_status(self) -> None: ...
+
+
+def response_json(response: JSONResponse) -> Any:
+    """Check and decode a vLLM JSON response without exposing its body."""
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        raise VLLMStatusError(f'HTTP {response.status_code}') from None
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise VLLMProtocolError(
+            f'Invalid vLLM response: malformed JSON ({exc})'
+        ) from None
 
 
 def parse_model_ids(payload: object) -> tuple[str, ...]:
@@ -58,10 +82,4 @@ def parse_model_ids_json(payload: str) -> tuple[str, ...]:
 
 def response_model_ids(response: JSONResponse) -> tuple[str, ...]:
     """Decode and validate an HTTP model-list response."""
-    try:
-        decoded = response.json()
-    except ValueError as exc:
-        raise VLLMProtocolError(
-            f'Invalid vLLM models response: malformed JSON ({exc})'
-        ) from None
-    return parse_model_ids(decoded)
+    return parse_model_ids(response_json(response))
