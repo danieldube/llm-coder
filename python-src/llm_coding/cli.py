@@ -31,8 +31,10 @@ from .status import ProviderState, inspect_provider, inspect_runtime
 from .systemd import inspect_unit
 from .vllm import (
     VLLMProtocolError,
+    VLLMStatusError,
     parse_model_ids,
     parse_model_ids_json,
+    response_json,
     response_model_ids,
 )
 
@@ -681,17 +683,19 @@ def llm_doctor(activate: bool) -> None:
         if model not in model_ids:
             fatal('Expected model is not served')
         print('Expected model ' + model)
-        completion = requests.post(
-            endpoint + '/chat/completions',
-            timeout=60,
-            json={
-                'model': model,
-                'max_tokens': 32,
-                'messages': [
-                    {'role': 'user', 'content': 'Reply with exactly: OK'}
-                ],
-            },
-        ).json()
+        completion = response_json(
+            requests.post(
+                endpoint + '/chat/completions',
+                timeout=60,
+                json={
+                    'model': model,
+                    'max_tokens': 32,
+                    'messages': [
+                        {'role': 'user', 'content': 'Reply with exactly: OK'}
+                    ],
+                },
+            )
+        )
         if (
             not completion.get('choices', [{}])[0]
             .get('message', {})
@@ -699,37 +703,42 @@ def llm_doctor(activate: bool) -> None:
         ):
             fatal('Chat completion failed')
         print('Chat completion')
-        tool_response = requests.post(
-            endpoint + '/chat/completions',
-            timeout=60,
-            json={
-                'model': model,
-                'max_tokens': 64,
-                'messages': [
-                    {
-                        'role': 'user',
-                        'content': (
-                            'Call get_temperature for Berlin. Use the tool; '
-                            'do not answer directly.'
-                        ),
-                    }
-                ],
-                'tools': [
-                    {
-                        'type': 'function',
-                        'function': {
-                            'name': 'get_temperature',
-                            'description': 'Get the temperature for a city',
-                            'parameters': {
-                                'type': 'object',
-                                'properties': {'city': {'type': 'string'}},
-                                'required': ['city'],
+        tool_response = response_json(
+            requests.post(
+                endpoint + '/chat/completions',
+                timeout=60,
+                json={
+                    'model': model,
+                    'max_tokens': 64,
+                    'messages': [
+                        {
+                            'role': 'user',
+                            'content': (
+                                'Call get_temperature for Berlin. '
+                                'Use the tool; '
+                                'do not answer directly.'
+                            ),
+                        }
+                    ],
+                    'tools': [
+                        {
+                            'type': 'function',
+                            'function': {
+                                'name': 'get_temperature',
+                                'description': (
+                                    'Get the temperature for a city'
+                                ),
+                                'parameters': {
+                                    'type': 'object',
+                                    'properties': {'city': {'type': 'string'}},
+                                    'required': ['city'],
+                                },
                             },
-                        },
-                    }
-                ],
-            },
-        ).json()
+                        }
+                    ],
+                },
+            )
+        )
         if (
             not tool_response.get('choices', [{}])[0]
             .get('message', {})
@@ -737,7 +746,12 @@ def llm_doctor(activate: bool) -> None:
         ):
             fatal('Tool calling test failed')
         print('Native tool calling')
-    except (requests.RequestException, VLLMProtocolError, ValueError) as e:
+    except (
+        requests.RequestException,
+        VLLMProtocolError,
+        VLLMStatusError,
+        ValueError,
+    ) as e:
         fatal(f'Activation test failed: {e}')
 
 

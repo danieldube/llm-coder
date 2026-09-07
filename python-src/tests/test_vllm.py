@@ -4,8 +4,15 @@
 
 import unittest
 from collections.abc import Callable
+from unittest.mock import MagicMock
 
-from llm_coding.vllm import VLLMProtocolError, parse_model_ids
+import requests
+from llm_coding.vllm import (
+    VLLMProtocolError,
+    VLLMStatusError,
+    parse_model_ids,
+    response_model_ids,
+)
 
 
 class VLLMResponseTests(unittest.TestCase):
@@ -49,6 +56,33 @@ class VLLMResponseTests(unittest.TestCase):
             ),
             ('other', 'expected-model'),
         )
+
+    def test_http_errors_are_rejected_before_json_parsing(self) -> None:
+        for status_code in (400, 503):
+            for body_kind in ('json', 'non-json'):
+                with self.subTest(
+                    status_code=status_code, body_kind=body_kind
+                ):
+                    response = MagicMock()
+                    response.status_code = status_code
+                    response.text = (
+                        '{"data": [{"id": "expected-model"}]}'
+                        if body_kind == 'json'
+                        else 'service unavailable'
+                    )
+                    response.raise_for_status.side_effect = requests.HTTPError(
+                        f'{status_code}: {response.text}'
+                    )
+
+                    try:
+                        response_model_ids(response)
+                    except VLLMStatusError as exc:
+                        self.assertEqual(str(exc), f'HTTP {status_code}')
+                    else:
+                        self.fail('Expected HTTP error to be rejected')
+
+                    response.raise_for_status.assert_called_once_with()
+                    response.json.assert_not_called()
 
 
 if __name__ == '__main__':

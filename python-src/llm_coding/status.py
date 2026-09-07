@@ -170,11 +170,8 @@ def _inspect_endpoint(port: int) -> EndpointState:
         response = requests.get(
             f'http://127.0.0.1:{port}/v1/models', timeout=2
         )
-        return (
-            EndpointState.REACHABLE
-            if response.ok
-            else EndpointState.UNREACHABLE
-        )
+        response.raise_for_status()
+        return EndpointState.REACHABLE
     except requests.RequestException:
         return EndpointState.UNREACHABLE
     except OSError:
