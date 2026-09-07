@@ -42,9 +42,8 @@ changing lifecycle, networking, credentials, systemd, or remote execution.
 
 Python filenames without a directory above are under `python-src/llm_coding/`.
 Import focused modules in new code; `core.py` is a compatibility facade.
-`python-src/main.py` is a legacy scaffold. `uninstall.sh` is the supported
-checkout cleanup script; it must not source configuration or diverge from the
-console entry points in `pyproject.toml`.
+`uninstall.sh` is the supported checkout cleanup script; it must not source
+configuration or diverge from the console entry points in `pyproject.toml`.
 
 Installed resources and source-checkout examples come canonically from
 `python-src/llm_coding/assets/` through `importlib.resources`. The wheel test

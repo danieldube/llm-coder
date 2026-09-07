@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm_coding import cli, core, opencode, runpod, runtime, ssh, systemd
 
+REPOSITORY_ROOT = Path(__file__).parents[2]
+
 
 def _source(module: object) -> str:
     return Path(module.__file__).read_text()  # type: ignore[attr-defined]
@@ -25,6 +27,21 @@ def _definitions(module: object) -> set[str]:
 
 
 class TestArchitectureBoundaries(unittest.TestCase):
+    def test_config_manager_has_one_authoritative_implementation(self) -> None:
+        implementations = []
+        for path in (REPOSITORY_ROOT / 'python-src').rglob('*.py'):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            if any(
+                isinstance(node, ast.ClassDef) and node.name == 'ConfigManager'
+                for node in ast.walk(tree)
+            ):
+                implementations.append(path.relative_to(REPOSITORY_ROOT))
+
+        self.assertEqual(
+            implementations,
+            [Path('python-src/llm_coding/config.py')],
+        )
+
     def test_cli_is_presentation_only(self) -> None:
         source = _source(cli)
         self.assertNotIn('fcntl.flock', source)
