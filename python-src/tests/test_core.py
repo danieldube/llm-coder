@@ -17,7 +17,12 @@ from unittest.mock import MagicMock, patch
 from llm_coding import runtime
 from llm_coding.config import Settings
 from llm_coding.core import RunPodAPIError
-from llm_coding.opencode import create_config, ensure_acp_registration, launch
+from llm_coding.opencode import (
+    create_config,
+    ensure_acp_registration,
+    launch,
+    remove_acp_registration,
+)
 from llm_coding.runpod import pod_create_body
 from llm_coding.ssh import (
     command,
@@ -373,6 +378,16 @@ class FocusedModuleTests(unittest.TestCase):
         options = rendered['provider']['runpod']['options']
         self.assertEqual(options['baseURL'], 'http://127.0.0.1:18000/v1')
 
+    def test_opencode_config_is_private_and_leaves_no_temporary_file(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = create_config(settings(root), root)
+
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(list(root.glob(f'.{path.name}.*.tmp')), [])
+
     def test_acp_registration_preserves_unrelated_agents(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
@@ -384,6 +399,82 @@ class FocusedModuleTests(unittest.TestCase):
             result = json.loads(path.read_text())
         self.assertIn('keep', result['agent_servers'])
         self.assertIn('OpenCode RunPod', result['agent_servers'])
+
+    def test_acp_registration_failure_preserves_file_and_cleans_temporary(
+        self,
+    ) -> None:
+        for operation in ('write', 'replace'):
+            with (
+                self.subTest(operation=operation),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                home = Path(temporary)
+                path = home / '.jetbrains/acp.json'
+                path.parent.mkdir()
+                original = json.dumps({'agent_servers': {'keep': {}}})
+                path.write_text(original)
+                target = f'llm_coding.state.os.{operation}'
+                with (
+                    patch('llm_coding.opencode.Path.home', return_value=home),
+                    patch(target, side_effect=OSError(f'{operation} failed')),
+                ):
+                    try:
+                        ensure_acp_registration(settings(home))
+                    except RuntimeError:
+                        pass
+                    else:
+                        self.fail(f'Expected {operation} failure')
+
+                self.assertEqual(path.read_text(), original)
+                self.assertEqual(
+                    list(path.parent.glob(f'.{path.name}.*.tmp')),
+                    [],
+                )
+
+    def test_acp_registration_replaces_file_with_private_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            path = home / '.jetbrains/acp.json'
+            path.parent.mkdir()
+            path.write_text(json.dumps({'agent_servers': {'keep': {}}}))
+            path.chmod(0o644)
+
+            with patch('llm_coding.opencode.Path.home', return_value=home):
+                ensure_acp_registration(settings(home))
+
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(list(path.parent.glob(f'.{path.name}.*.tmp')), [])
+
+    def test_acp_removal_preserves_unrelated_entries_and_private_mode(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            path = home / '.jetbrains/acp.json'
+            path.parent.mkdir()
+            path.write_text(
+                json.dumps(
+                    {
+                        'agent_servers': {
+                            'keep': {'command': 'keep'},
+                            'OpenCode RunPod': {'command': 'remove'},
+                        },
+                        'unrelated': {'value': True},
+                    }
+                )
+            )
+            path.chmod(0o644)
+
+            with patch('llm_coding.opencode.Path.home', return_value=home):
+                remove_acp_registration(settings(home))
+
+            result = json.loads(path.read_text())
+            self.assertEqual(
+                result['agent_servers'], {'keep': {'command': 'keep'}}
+            )
+            self.assertEqual(result['unrelated'], {'value': True})
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(list(path.parent.glob(f'.{path.name}.*.tmp')), [])
 
 
 if __name__ == '__main__':
