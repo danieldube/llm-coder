@@ -30,7 +30,12 @@ from .runpod import (
     pod_create_body,
 )
 from .ssh import command as ssh_command
-from .ssh import exec_tunnel, is_host_key_mismatch, prepare_endpoint
+from .ssh import (
+    exec_tunnel,
+    is_host_key_mismatch,
+    prepare_endpoint,
+    public_key_path,
+)
 from .state import (
     ACTIVATION_FAILURE_FILE,
     ACTIVATION_STATUS_FILE,
@@ -112,6 +117,7 @@ def install(dependencies: RuntimeDependencies | None = None) -> None:
                 destination.chmod(0o600)
         config = manager.load_settings()
         key = config.runpod_ssh_key
+        public_key = public_key_path(key)
         if not key.exists():
             key.parent.mkdir(parents=True, exist_ok=True)
             deps.run(
@@ -128,6 +134,10 @@ def install(dependencies: RuntimeDependencies | None = None) -> None:
                     'runpod-llm-coding',
                 ]
             )
+            if not public_key.is_file():
+                raise RuntimeError(
+                    f'SSH public key was not generated: {public_key}'
+                )
         ensure_installed(config, deps.run)
         ensure_acp_registration(config)
         systemd_install(config, deps.systemd_controller())
@@ -233,9 +243,7 @@ def up(
         state.record_activation_failure,
     ):
         ensure_acp_registration(config)
-        public_key = config.runpod_ssh_key.with_suffix(
-            config.runpod_ssh_key.suffix + '.pub'
-        )
+        public_key = public_key_path(config.runpod_ssh_key)
         if not public_key.is_file():
             raise RuntimeError(f'SSH public key not found: {public_key}')
         state.set_activation_status('Checking the RunPod pod')

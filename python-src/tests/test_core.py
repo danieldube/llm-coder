@@ -19,7 +19,12 @@ from llm_coding.config import Settings
 from llm_coding.core import RunPodAPIError
 from llm_coding.opencode import create_config, ensure_acp_registration, launch
 from llm_coding.runpod import pod_create_body
-from llm_coding.ssh import command, is_host_key_mismatch, prepare_endpoint
+from llm_coding.ssh import (
+    command,
+    is_host_key_mismatch,
+    prepare_endpoint,
+    public_key_path,
+)
 from llm_coding.state import FileStateStore, atomic_write_private
 from llm_coding.systemd import render_units
 
@@ -41,6 +46,18 @@ def settings(root: Path) -> Settings:
 
 
 class FocusedModuleTests(unittest.TestCase):
+    def test_public_key_path_appends_pub_to_complete_filename(self) -> None:
+        cases = {
+            Path('/keys/id_ed25519'): Path('/keys/id_ed25519.pub'),
+            Path('/keys/id_ed25519.pem'): Path('/keys/id_ed25519.pem.pub'),
+            Path('/keys/team.user.key'): Path('/keys/team.user.key.pub'),
+            Path('/keys/.identity'): Path('/keys/.identity.pub'),
+        }
+
+        for private_key, expected in cases.items():
+            with self.subTest(private_key=private_key):
+                self.assertEqual(public_key_path(private_key), expected)
+
     def test_opencode_reports_failed_background_prewarm(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
