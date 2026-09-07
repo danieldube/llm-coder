@@ -25,7 +25,20 @@ class HTTPTransport(Protocol):
     ) -> HTTPResponse: ...
 
 
-CommandRunner = Callable[..., CompletedProcess[str]]
+class CommandRunner(Protocol):
+    """Run a text-mode command with the options used by this project."""
+
+    def __call__(
+        self,
+        args: list[str],
+        *,
+        check: bool = True,
+        capture_output: bool = False,
+        input: str | None = None,  # noqa: A002 - match subprocess.run
+        diagnostics: bool = False,
+    ) -> CompletedProcess[str]: ...
+
+
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 

@@ -123,14 +123,18 @@ class FocusedModuleTests(unittest.TestCase):
                     'llm_coding.opencode.subprocess.Popen',
                     return_value=prewarm,
                 ),
-                patch('llm_coding.opencode.subprocess.run') as run,
+                patch('llm_coding.opencode.run_command') as run,
                 patch('llm_coding.opencode.threading.Thread', thread),
                 redirect_stderr(stderr),
             ):
                 launch(settings(home), home, ['--help'])
 
-        self.assertEqual(stderr.getvalue(), 'capacity diagnostic\n')
-        run.assert_called_once_with([str(binary), '--help'], check=True)
+        self.assertEqual(
+            stderr.getvalue(),
+            'OpenCode prewarm failed (exit code 1); run llm-up for details.\n',
+        )
+        self.assertNotIn('capacity diagnostic', stderr.getvalue())
+        run.assert_called_once_with([str(binary), '--help'])
 
     def test_packaged_remote_launcher_is_read_with_package_and_name(
         self,

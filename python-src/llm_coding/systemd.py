@@ -8,16 +8,9 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from .command import run_command
 from .config import Settings
 from .interfaces import CommandRunner, SystemdController
-
-
-def run_command(
-    args: list[str], **kwargs: object
-) -> subprocess.CompletedProcess[str]:
-    kwargs.setdefault('check', True)
-    kwargs.setdefault('text', True)
-    return subprocess.run(args, **kwargs)  # type: ignore[call-overload,no-any-return]  # noqa: PLW1510
 
 
 class Systemd:

@@ -14,6 +14,7 @@ from pathlib import Path
 import click
 import requests
 
+from .command import run_command
 from .config import ConfigManager, Settings
 from .core import check_dependencies, fatal
 from .opencode import create_config as create_opencode_config
@@ -35,28 +36,6 @@ from .vllm import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def run_command(
-    cmd: list[str], capture_output: bool = True, check: bool = True
-) -> subprocess.CompletedProcess[str]:
-    """Run a command and handle errors"""
-    try:
-        if capture_output:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, check=check
-            )
-        else:
-            result = subprocess.run(cmd, check=check, text=True)
-        return result
-    except subprocess.CalledProcessError as e:
-        logger.error('Command failed: %s', ' '.join(cmd))
-        logger.error('Return code: %s', e.returncode)
-        if e.stdout:
-            logger.error('STDOUT: %s', e.stdout)
-        if e.stderr:
-            logger.error('STDERR: %s', e.stderr)
-        raise
 
 
 def get_systemd_service_info(service_name: str) -> tuple[str, str]:
@@ -617,7 +596,7 @@ def llm_doctor(activate: bool) -> None:
     expected_version = config.opencode_version
     if expected_version:
         installed_version = run_command(
-            [str(opencode_bin), '--version']
+            [str(opencode_bin), '--version'], capture_output=True
         ).stdout.strip()
         if installed_version != expected_version:
             fatal(
