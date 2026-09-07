@@ -37,7 +37,7 @@ changing lifecycle, networking, credentials, systemd, or remote execution.
 | OpenCode release allowlist, config, ACP | `opencode.py` |
 | Dependency injection protocols | `interfaces.py` |
 | Remote build and launcher | `docker/Dockerfile`, `docker/start-vllm.sh` |
-| Remote health/restart orchestration | `remote/ensure-vllm.sh` and packaged copy |
+| Remote health/restart orchestration | `python-src/llm_coding/assets/remote/ensure-vllm.sh` |
 | Validation | `python-src/tests/`, `tests/static-checks.sh`, `.github/workflows/ci.yml` |
 
 Python filenames without a directory above are under `python-src/llm_coding/`.
@@ -46,13 +46,9 @@ Import focused modules in new code; `core.py` is a compatibility facade.
 checkout cleanup script; it must not source configuration or diverge from the
 console entry points in `pyproject.toml`.
 
-Installed resources come from `python-src/llm_coding/assets/` through
-`importlib.resources`. Keep these pairs byte-identical when editing:
-
-- `config/*` and `python-src/llm_coding/assets/config/*` (matching assets).
-- `remote/ensure-vllm.sh` and its `assets/remote/` copy.
-
-The wheel test checks resource inclusion, not equality of duplicate assets.
+Installed resources and source-checkout examples come canonically from
+`python-src/llm_coding/assets/` through `importlib.resources`. The wheel test
+compares every packaged asset byte-for-byte with that source.
 Keep generated metadata, `build/`, `dist/`, and `.venv/` out of commits.
 
 ## Implementation rules

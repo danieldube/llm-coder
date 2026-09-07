@@ -47,9 +47,10 @@ docker build --tag llm-coding-runtime:local docker
 ```
 
 All behavior changes require focused unit tests. Do not run live activation
-as routine validation. Verify matching `config/` and `remote/` assets against
-`python-src/llm_coding/assets/` when changing them. The wheel test checks asset
-presence, not byte equality. Report failed or unavailable checks in the handoff.
+as routine validation. `python-src/llm_coding/assets/` is the single canonical
+location for configuration examples and remote scripts. Packaging tests compare
+every file there byte-for-byte with its wheel entry. Report failed or unavailable
+checks in the handoff.
 
 ## Updating the OpenCode release
 

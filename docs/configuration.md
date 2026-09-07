@@ -49,7 +49,8 @@ Required nonempty strings: `RUNPOD_API_KEY`, `RUNPOD_SSH_KEY`,
 `YOUR_API_KEY`, and `<API_KEY>` are rejected case-insensitively. Other
 placeholder strings, including the example image, are not rejected.
 
-The [example](../config/config.env.example) supplies release/model pins;
+The [example](../python-src/llm_coding/assets/config/config.env.example) supplies
+release/model pins;
 required settings have no usable fallback when omitted from configuration.
 The tables below list parser defaults for optional settings.
 

@@ -34,14 +34,18 @@ class WheelPackagingTests(unittest.TestCase):
                 cwd=root,
             )
             wheel = next(wheel_dir.glob('llm_coding-*.whl'))
-            required_assets = {
-                'llm_coding/assets/config/config.env.example',
-                'llm_coding/assets/config/secrets.env.example',
-                'llm_coding/assets/config/opencode.base.json',
-                'llm_coding/assets/remote/ensure-vllm.sh',
+            asset_root = repository / 'python-src/llm_coding/assets'
+            source_assets = {
+                path.relative_to(
+                    repository / 'python-src'
+                ).as_posix(): path.read_bytes()
+                for path in asset_root.rglob('*')
+                if path.is_file() and '__pycache__' not in path.parts
             }
             with zipfile.ZipFile(wheel) as archive:
-                assert required_assets.issubset(archive.namelist())
+                for name, contents in source_assets.items():
+                    with self.subTest(asset=name):
+                        assert archive.read(name) == contents
                 metadata_name = next(
                     name
                     for name in archive.namelist()
