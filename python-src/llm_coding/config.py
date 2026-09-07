@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from collections.abc import Mapping
@@ -165,7 +166,9 @@ def parse_settings(
     except ValueError:
         errors.append('VLLM_GPU_MEMORY_UTILIZATION must be a number')
         utilization = 0.92
-    if not 0 < utilization <= 1:
+    if not math.isfinite(utilization):
+        errors.append('VLLM_GPU_MEMORY_UTILIZATION must be a finite number')
+    elif not 0 < utilization <= 1:
         errors.append(
             'VLLM_GPU_MEMORY_UTILIZATION must be greater than 0 and at most 1'
         )
