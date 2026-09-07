@@ -28,7 +28,8 @@ llm_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/llm-coding"
 install -d -m 0700 "$llm_config_dir"
 for name in config secrets; do
   if [ ! -e "$llm_config_dir/$name.env" ]; then
-    install -m 0600 "config/$name.env.example" "$llm_config_dir/$name.env"
+    install -m 0600 "python-src/llm_coding/assets/config/$name.env.example" \
+      "$llm_config_dir/$name.env"
   fi
 done
 ```

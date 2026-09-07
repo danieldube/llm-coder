@@ -16,12 +16,12 @@ while IFS= read -r script; do
     bash -n "${script}"
 done < <(find_scripts)
 
-jq empty "${ROOT}/config/opencode.base.json"
+jq empty "${ROOT}/python-src/llm_coding/assets/config/opencode.base.json"
 jq -e '
   .enabled_providers == ["runpod"]
   and .model == "runpod/PLACEHOLDER"
   and (.provider | keys == ["runpod"])
-' "${ROOT}/config/opencode.base.json" >/dev/null
+' "${ROOT}/python-src/llm_coding/assets/config/opencode.base.json" >/dev/null
 
 grep -F -- '--enable-log-requests' "${ROOT}/docker/start-vllm.sh" >/dev/null
 

@@ -51,9 +51,8 @@ package-dir = {"" = "python-src"}
 
 [tool.setuptools.package-data]
 llm_coding = [
-    "assets/config/*.example",
-    "assets/config/*.json",
-    "assets/remote/*.sh",
+    "assets/config/*",
+    "assets/remote/*",
 ]
 
 [tool.ruff]

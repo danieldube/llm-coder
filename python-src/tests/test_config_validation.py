@@ -116,9 +116,10 @@ class TestConfigValidation(unittest.TestCase):
 
     def test_checked_in_example_is_valid_with_real_secret(self) -> None:
         root = Path(__file__).parents[2]
+        examples = root / 'python-src/llm_coding/assets/config'
         settings = parse_settings(
-            root / 'config/config.env.example',
-            root / 'config/secrets.env.example',
+            examples / 'config.env.example',
+            examples / 'secrets.env.example',
             {'RUNPOD_API_KEY': 'real-test-token'},
         )
         self.assertEqual(settings.local_proxy_port, 18000)

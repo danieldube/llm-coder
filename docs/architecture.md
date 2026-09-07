@@ -155,7 +155,7 @@ OpenCode configuration is regenerated on wrapper launch and successful
 Runtime accepts command, clock, sleep, systemd, and provider dependencies.
 HTTP readiness probes still use `requests` directly; tests mock those calls.
 Packaged assets under `python-src/llm_coding/assets/` supply installed runtime
-resources. Root `config/` and `remote/` copies must remain synchronized.
+resources and are the canonical copies used from a source checkout and a wheel.
 `python-src/main.py` is a legacy scaffold, not an installed entry point.
 
 ## Status contract
