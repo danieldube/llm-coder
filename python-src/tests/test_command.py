@@ -1,6 +1,6 @@
 """Tests for the shared subprocess abstraction."""
 
-# ruff: noqa: PT009
+# ruff: noqa: PT009, PT027
 
 import logging
 import subprocess
