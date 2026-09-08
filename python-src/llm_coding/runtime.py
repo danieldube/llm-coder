@@ -1,6 +1,7 @@
 """Lifecycle orchestration for the on-demand RunPod endpoint."""
 
 import importlib.resources
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -32,7 +33,9 @@ from .runpod import (
 )
 from .ssh import command as ssh_command
 from .ssh import (
+    endpoint_pod_id,
     exec_tunnel,
+    forget_endpoint_for_deleted_pod,
     is_host_key_mismatch,
     prepare_endpoint,
     public_key_path,
@@ -56,6 +59,46 @@ class PodProvider(Protocol):
     def create_pod(self, pod_config: dict[str, Any]) -> str: ...
     def start_pod(self, pod_id: str) -> None: ...
     def stop_pod(self, pod_id: str) -> None: ...
+
+
+_REMOTE_FAILURE_PREFIX = 'LLM_CODING_REMOTE_FAILURE='
+_REMOTE_FAILURE_MESSAGES = {
+    'missing_launcher': (
+        'RunPod vLLM startup failed: the selected image has no prebuilt '
+        'llm-coding launcher. Set RUNPOD_IMAGE to a published compatible '
+        'runtime image, then retry llm-up.'
+    ),
+    'no_cuda': (
+        'RunPod vLLM startup failed: the prebuilt runtime cannot access a '
+        'CUDA device. Verify the Pod GPU assignment and RUNPOD_IMAGE, then '
+        'retry llm-up.'
+    ),
+    'vllm_exited': (
+        'RunPod vLLM exited before it became ready. Check image and model '
+        'compatibility or available GPU memory, then retry llm-up.'
+    ),
+    'vllm_timeout': (
+        'RunPod vLLM did not become ready before VLLM_START_TIMEOUT_SECONDS. '
+        'A first model download can take longer; increase that setting or '
+        'review /workspace/llm-coding/vllm.log through trusted SSH access.'
+    ),
+}
+
+
+def _remote_startup_error(exc: subprocess.CalledProcessError) -> RuntimeError:
+    """Translate a safe marker without exposing remote output."""
+    stderr = exc.stderr
+    if isinstance(stderr, str):
+        for line in stderr.splitlines():
+            if line.startswith(_REMOTE_FAILURE_PREFIX):
+                code = line.removeprefix(_REMOTE_FAILURE_PREFIX)
+                message = _REMOTE_FAILURE_MESSAGES.get(code)
+                if message is not None:
+                    return RuntimeError(message)
+    return RuntimeError(
+        'RunPod vLLM startup command failed without a diagnostic code. '
+        'Verify RUNPOD_IMAGE is compatible, then retry llm-up.'
+    )
 
 
 @dataclass(frozen=True)
@@ -193,7 +236,7 @@ def _create_pod_or_raise(
 
 
 def _select_pod(
-    state: RuntimeState, client: PodProvider, name: str
+    state: RuntimeState, client: PodProvider, name: str, run: CommandRunner
 ) -> dict[str, Any] | None:
     persisted_id = state.read_pod_id()
     if persisted_id:
@@ -202,11 +245,37 @@ def _select_pod(
         except RunPodAPIError as exc:
             if exc.status_code != 404:
                 raise
+            if endpoint_pod_id(state.directory) == persisted_id:
+                forget_endpoint_for_deleted_pod(
+                    state.directory, persisted_id, run
+                )
+            else:
+                _forget_endpoint_after_confirmed_replacement(
+                    state, client, persisted_id, run
+                )
             state.forget_pod_id()
     pod = client.find_pod_by_name(name)
     if pod is not None:
         state.write_pod_id(str(pod['id']))
     return pod
+
+
+def _forget_endpoint_after_confirmed_replacement(
+    state: RuntimeState,
+    client: PodProvider,
+    pod_id: str,
+    run: CommandRunner,
+) -> None:
+    """Recover stale trust state left by an interrupted Pod replacement."""
+    previous_id = endpoint_pod_id(state.directory)
+    if previous_id is None or previous_id == pod_id:
+        return
+    try:
+        client.get_pod(previous_id)
+    except RunPodAPIError as exc:
+        if exc.status_code != 404:
+            raise
+        forget_endpoint_for_deleted_pod(state.directory, previous_id, run)
 
 
 def up(
@@ -231,7 +300,7 @@ def up(
             raise RuntimeError(f'SSH public key not found: {public_key}')
         state.set_activation_status('Checking the RunPod pod')
         client = provider or RunPodClient(config.runpod_api_key)
-        pod = _select_pod(state, client, config.runpod_pod_name)
+        pod = _select_pod(state, client, config.runpod_pod_name, deps.run)
         if pod is None:
             state.set_activation_status('Creating a RunPod pod')
             pod_id = _create_pod_or_raise(
@@ -247,6 +316,9 @@ def up(
             if pod.get('desiredStatus') == 'EXITED':
                 state.set_activation_status('Starting the stopped RunPod pod')
                 _start_pod_or_raise(client, pod_id, config)
+        _forget_endpoint_after_confirmed_replacement(
+            state, client, pod_id, deps.run
+        )
         deadline = deps.monotonic() + config.runpod_start_timeout_seconds
         host: str | None = None
         port: int | None = None
@@ -300,25 +372,29 @@ def up(
         state.set_activation_status(
             'Preparing vLLM on RunPod (first start can take several minutes)'
         )
-        deps.run(
-            [
-                *ssh,
-                'bash',
-                '-s',
-                '--',
-                config.vllm_version,
-                config.vllm_cuda_version,
-                config.model_id,
-                config.model_revision,
-                config.served_model_name,
-                str(config.context_size),
-                str(config.vllm_gpu_memory_utilization),
-                config.vllm_tool_call_parser,
-                str(config.remote_vllm_port),
-                str(config.vllm_start_timeout_seconds),
-            ],
-            input=_asset_text('remote', 'ensure-vllm.sh'),
-        )
+        try:
+            deps.run(
+                [
+                    *ssh,
+                    'bash',
+                    '-s',
+                    '--',
+                    config.vllm_version,
+                    config.vllm_cuda_version,
+                    config.model_id,
+                    config.model_revision,
+                    config.served_model_name,
+                    str(config.context_size),
+                    str(config.vllm_gpu_memory_utilization),
+                    config.vllm_tool_call_parser,
+                    str(config.remote_vllm_port),
+                    str(config.vllm_start_timeout_seconds),
+                ],
+                capture_output=True,
+                input=_asset_text('remote', 'ensure-vllm.sh'),
+            )
+        except subprocess.CalledProcessError as exc:
+            raise _remote_startup_error(exc) from None
         (manager.state_dir / 'runtime.env').write_text(
             f'SSH_HOST={host}\nSSH_PORT={port}\nSSH_KEY={config.runpod_ssh_key}\n'
         )
@@ -389,7 +465,7 @@ def down(
             errors.append(f'could not stop the SSH tunnel ({exc})')
         try:
             client = provider or RunPodClient(config.runpod_api_key)
-            pod = _select_pod(state, client, config.runpod_pod_name)
+            pod = _select_pod(state, client, config.runpod_pod_name, deps.run)
             if pod and pod.get('desiredStatus') == 'RUNNING':
                 client.stop_pod(str(pod['id']))
         except (requests.RequestException, RuntimeError, ValueError) as exc:

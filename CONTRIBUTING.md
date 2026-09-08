@@ -93,8 +93,6 @@ concrete regression contracts in the test suite and are not duplicated here.
 - Fresh `llm-install` passes a single path to `_asset_text`, which requires
   separate package/name arguments. Missing templates fail before validation;
   the README documents manual template creation.
-- Pod replacement after a provider 404 can retain SSH endpoint state for the
-  previous Pod and fail enrollment. There is no replacement command.
 - Configuration is inherited separately by CLI and systemd; secret environment
   variables are not filtered when launching OpenCode.
 - Status reports normal idle standby as degraded, and configuration errors

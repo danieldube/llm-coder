@@ -19,13 +19,26 @@ PID_FILE="${RUNTIME_ROOT}/vllm.pid"
 LOG_FILE="${RUNTIME_ROOT}/vllm.log"
 SIGNATURE_FILE="${RUNTIME_ROOT}/runtime.signature"
 
+fail() {
+    printf 'LLM_CODING_REMOTE_FAILURE=%s\n' "$1" >&2
+    exit 1
+}
+
 mkdir -p "${RUNTIME_ROOT}" "${HF_HOME}"
 export HF_HOME
 
 if [[ ! -x "${LAUNCHER}" ]]; then
-    echo 'The selected RunPod image has no prebuilt vLLM launcher.' >&2
-    echo 'Set RUNPOD_IMAGE to a published llm-coding runtime image.' >&2
-    exit 1
+    fail missing_launcher
+fi
+
+if ! /opt/llm-coding/vllm/bin/python - <<'PY'
+import torch
+
+if not torch.cuda.is_available():
+    raise RuntimeError('No CUDA device is available')
+PY
+then
+    fail no_cuda
 fi
 
 signature="$(printf '%s\n' \
@@ -93,14 +106,10 @@ while (( SECONDS < deadline )); do
 
     pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
     if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
-        echo 'vLLM terminated unexpectedly.' >&2
-        tail -n 120 "${LOG_FILE}" >&2 || true
-        exit 1
+        fail vllm_exited
     fi
 
     sleep 5
 done
 
-echo "vLLM startup timed out after ${START_TIMEOUT}s." >&2
-tail -n 120 "${LOG_FILE}" >&2 || true
-exit 1
+fail vllm_timeout

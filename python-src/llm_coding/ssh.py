@@ -51,6 +51,12 @@ def _read_endpoint(state_dir: Path) -> dict[str, Any] | None:
     return value
 
 
+def endpoint_pod_id(state_dir: Path) -> str | None:
+    """Return the Pod bound to the persisted SSH endpoint, if any."""
+    endpoint = _read_endpoint(state_dir)
+    return None if endpoint is None else str(endpoint['pod_id'])
+
+
 def _write_endpoint(
     state_dir: Path, pod_id: str, host: str, port: int
 ) -> None:
@@ -61,6 +67,34 @@ def _write_endpoint(
     except OSError as exc:
         raise RuntimeError(
             f'Cannot persist SSH endpoint state at {path}'
+        ) from exc
+
+
+def forget_endpoint_for_deleted_pod(
+    state_dir: Path, pod_id: str, run: CommandRunner
+) -> None:
+    """Remove trust state only after RunPod confirms this pod was deleted."""
+    previous = _read_endpoint(state_dir)
+    if previous is None:
+        return
+    if previous['pod_id'] != pod_id:
+        raise RuntimeError(
+            'Refusing to clear SSH endpoint state for deleted RunPod '
+            f'{pod_id}: it belongs to RunPod {previous["pod_id"]}'
+        )
+    old_name = _endpoint_name(previous['host'], previous['port'])
+    result = run(
+        ['ssh-keygen', '-R', old_name, '-f', str(_known_hosts(state_dir))],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode:
+        raise RuntimeError(f'Could not remove deleted SSH endpoint {old_name}')
+    try:
+        (state_dir / ENDPOINT_STATE_FILE).unlink()
+    except OSError as exc:
+        raise RuntimeError(
+            'Cannot clear persisted SSH endpoint state'
         ) from exc
 
 
@@ -84,8 +118,13 @@ def prepare_endpoint(
         return
     if previous['pod_id'] != pod_id:
         raise RuntimeError(
-            'Refusing SSH endpoint enrollment: persisted endpoint belongs to '
-            f'RunPod {previous["pod_id"]}, not expected pod {pod_id}'
+            'SSH endpoint enrollment stopped: the saved SSH trust record is '
+            f'for RunPod {previous["pod_id"]}, but RunPod selected {pod_id}. '
+            'This prevents trusting a different Pod. If you deliberately '
+            f'deleted {previous["pod_id"]}, retry llm-up; it clears this '
+            'record only after RunPod confirms that Pod is gone. If the error '
+            'persists, run llm-status to verify the selected Pod. Do not '
+            'delete known_hosts manually.'
         )
     if (previous['host'], previous['port']) == (host, port):
         return

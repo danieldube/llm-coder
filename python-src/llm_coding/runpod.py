@@ -156,11 +156,10 @@ class RunPodClient:
         endpoint = f'GET /pods/{pod_id}'
         host = pod.get('publicIp')
         mappings = pod.get('portMappings')
-        if (
-            pod['desiredStatus'] != 'RUNNING'
-            and host is None
-            and mappings is None
-        ):
+        # RunPod can report RUNNING before it assigns the public address and
+        # forwarded ports. Treat absent or null endpoint fields as pending so
+        # the lifecycle's bounded readiness loop can retry.
+        if host is None or mappings is None:
             return None
         if not isinstance(host, str) or not host:
             raise RunPodProtocolError(
@@ -171,6 +170,8 @@ class RunPodClient:
                 f'RunPod API {endpoint} returned invalid portMappings'
             )
         port = mappings.get('22')
+        if port is None:
+            return None
         if (
             not isinstance(port, int)
             or isinstance(port, bool)

@@ -6,6 +6,7 @@
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -27,6 +28,7 @@ from llm_coding.opencode import (
 from llm_coding.runpod import RunPodAPIError, pod_create_body
 from llm_coding.ssh import (
     command,
+    forget_endpoint_for_deleted_pod,
     is_host_key_mismatch,
     prepare_endpoint,
     public_key_path,
@@ -52,6 +54,26 @@ def settings(root: Path) -> Settings:
 
 
 class FocusedModuleTests(unittest.TestCase):
+    def test_remote_startup_error_uses_only_known_marker(self) -> None:
+        error = subprocess.CalledProcessError(
+            1,
+            ['ssh', 'secret-argument'],
+            stderr='untrusted output\nLLM_CODING_REMOTE_FAILURE=no_cuda\n',
+        )
+        message = str(runtime._remote_startup_error(error))
+        self.assertIn('cannot access a CUDA device', message)
+        self.assertNotIn('untrusted output', message)
+        self.assertNotIn('secret-argument', message)
+
+    def test_remote_startup_error_uses_safe_fallback(self) -> None:
+        error = subprocess.CalledProcessError(
+            1, ['ssh', 'secret-argument'], stderr='unexpected output'
+        )
+        message = str(runtime._remote_startup_error(error))
+        self.assertIn('without a diagnostic code', message)
+        self.assertNotIn('unexpected output', message)
+        self.assertNotIn('secret-argument', message)
+
     def test_legacy_settings_adapter_validates_and_constructs_settings(
         self,
     ) -> None:
@@ -354,9 +376,45 @@ class FocusedModuleTests(unittest.TestCase):
                     root, 'pod-2', 'host-b', 22, runner, MagicMock()
                 )
             except RuntimeError as exc:
-                self.assertIn('not expected pod pod-2', str(exc))
+                self.assertIn(
+                    'saved SSH trust record is for RunPod pod-1', str(exc)
+                )
+                self.assertIn('retry llm-up', str(exc))
             else:
                 self.fail('Expected different pod identity to fail')
+            runner.assert_not_called()
+
+    def test_deleted_pod_clears_only_its_ssh_endpoint_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = MagicMock(return_value=SimpleNamespace(returncode=0))
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            forget_endpoint_for_deleted_pod(root, 'pod-1', runner)
+            self.assertFalse((root / 'runtime.ssh-endpoint.json').exists())
+            runner.assert_called_once_with(
+                [
+                    'ssh-keygen',
+                    '-R',
+                    '[host-a]:22',
+                    '-f',
+                    str(root / 'known_hosts'),
+                ],
+                check=False,
+                capture_output=True,
+            )
+
+    def test_deleted_pod_refuses_to_clear_another_pod_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner = MagicMock()
+            prepare_endpoint(root, 'pod-1', 'host-a', 22, runner, MagicMock())
+            try:
+                forget_endpoint_for_deleted_pod(root, 'pod-2', runner)
+            except RuntimeError as exc:
+                self.assertIn('belongs to RunPod pod-1', str(exc))
+            else:
+                self.fail('Expected mismatched Pod endpoint cleanup to fail')
+            self.assertTrue((root / 'runtime.ssh-endpoint.json').exists())
             runner.assert_not_called()
 
     def test_systemd_units_bind_public_endpoint_to_loopback(self) -> None:

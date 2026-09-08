@@ -66,6 +66,9 @@ The SSH endpoint is bound to the selected Pod ID in local state. Stable
 endpoints retain their host key. A provider-confirmed endpoint change for the
 same Pod removes only the obsolete address from `known_hosts`. A changed Pod
 identity or host-key mismatch fails closed. See [SSH trust](../SECURITY.md#dynamic-ssh-endpoints-and-host-keys).
+A provider-confirmed 404 for a persisted or stale endpoint-bound Pod clears
+only that Pod's stored endpoint and its precise `known_hosts` entry before a
+replacement Pod enrolls.
 
 Runtime startup, shutdown, full installation, and integration removal share a
 nonblocking `flock` with bounded retries. Installation waits up to 30 seconds;

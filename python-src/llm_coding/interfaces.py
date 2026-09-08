@@ -1,6 +1,7 @@
 """Small dependency interfaces used by runtime orchestration."""
 
 from collections.abc import Callable
+from pathlib import Path
 from subprocess import CompletedProcess
 from typing import Any, Protocol
 
@@ -48,6 +49,8 @@ class SystemdController(Protocol):
 
 
 class RuntimeState(Protocol):
+    directory: Path
+
     def read_pod_id(self) -> str | None: ...
     def write_pod_id(self, pod_id: str) -> None: ...
     def forget_pod_id(self) -> None: ...

@@ -8,12 +8,13 @@ import unittest
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import requests
 from llm_coding import runtime
 from llm_coding.config import Settings
 from llm_coding.runpod import RunPodAPIError, RunPodClient, RunPodProtocolError
+from llm_coding.ssh import prepare_endpoint
 from llm_coding.state import FileStateStore
 
 
@@ -110,13 +111,29 @@ class TestRunPodContracts(unittest.TestCase):
                 with self.assertRaises(RunPodProtocolError):
                     method()
 
+    def test_ssh_endpoint_waits_for_incomplete_mapping(self) -> None:
+        pending: tuple[object, ...] = (None, {}, {'22': None})
+        for mappings in pending:
+            pod: dict[str, object] = {
+                **_pod(),
+                'publicIp': '203.0.113.1',
+                'portMappings': mappings,
+            }
+            with (
+                self.subTest(port_mappings=mappings),
+                patch(
+                    'llm_coding.runpod.requests.request',
+                    return_value=self._response(pod),
+                ),
+            ):
+                self.assertIsNone(
+                    RunPodClient('key').get_pod_endpoint('pod-1')
+                )
+
     def test_ssh_endpoint_rejects_malformed_port_mappings(self) -> None:
         malformed: tuple[object, ...] = (
-            None,
             [],
             '22',
-            {},
-            {'22': None},
             {'22': []},
             {'22': '22022'},
             {'22': True},
@@ -126,8 +143,7 @@ class TestRunPodContracts(unittest.TestCase):
                 **_pod(),
                 'publicIp': '203.0.113.1',
             }
-            if mappings != {}:
-                pod['portMappings'] = mappings
+            pod['portMappings'] = mappings
             with (
                 self.subTest(port_mappings=mappings),
                 patch(
@@ -138,8 +154,20 @@ class TestRunPodContracts(unittest.TestCase):
             ):
                 RunPodClient('key').get_pod_endpoint('pod-1')
 
+    def test_ssh_endpoint_waits_for_missing_ip_when_running(self) -> None:
+        pod: dict[str, object] = {
+            **_pod(),
+            'publicIp': None,
+            'portMappings': {'22': 22022},
+        }
+        with patch(
+            'llm_coding.runpod.requests.request',
+            return_value=self._response(pod),
+        ):
+            self.assertIsNone(RunPodClient('key').get_pod_endpoint('pod-1'))
+
     def test_ssh_endpoint_requires_a_non_empty_string_host(self) -> None:
-        invalid_hosts: tuple[object, ...] = (None, '', [], True)
+        invalid_hosts: tuple[object, ...] = ('', [], True)
         for host in invalid_hosts:
             pod: dict[str, object] = {
                 **_pod(),
@@ -188,11 +216,13 @@ class TestPersistedPodIdentity(unittest.TestCase):
         client = MagicMock()
         client.find_pod_by_name.return_value = _pod()
         self.assertEqual(
-            runtime._select_pod(self.state, client, 'model'), _pod()
+            runtime._select_pod(self.state, client, 'model', MagicMock()),
+            _pod(),
         )
         client.get_pod.return_value = _pod()
         self.assertEqual(
-            runtime._select_pod(self.state, client, 'model'), _pod()
+            runtime._select_pod(self.state, client, 'model', MagicMock()),
+            _pod(),
         )
         client.find_pod_by_name.assert_called_once_with('model')
         self.assertEqual(client.get_pod.call_count, 1)
@@ -204,7 +234,7 @@ class TestPersistedPodIdentity(unittest.TestCase):
         client = MagicMock()
         client.find_pod_by_name.side_effect = ValueError('ambiguous')
         with self.assertRaisesRegex(ValueError, 'ambiguous'):
-            runtime._select_pod(self.state, client, 'model')
+            runtime._select_pod(self.state, client, 'model', MagicMock())
         self.assertFalse((self.manager.state_dir / 'runtime.pod-id').exists())
 
     def test_failed_atomic_write_removes_temporary_state(self) -> None:
@@ -230,21 +260,90 @@ class TestPersistedPodIdentity(unittest.TestCase):
             client = MagicMock()
             client.get_pod.side_effect = error
             with self.subTest(error=error), self.assertRaises(type(error)):
-                runtime._select_pod(self.state, client, 'model')
+                runtime._select_pod(self.state, client, 'model', MagicMock())
             client.find_pod_by_name.assert_not_called()
 
     def test_missing_persisted_pod_allows_deliberate_replacement(self) -> None:
         self.state.write_pod_id('gone')
+        runner = MagicMock(return_value=SimpleNamespace(returncode=0))
+        prepare_endpoint(
+            self.manager.state_dir,
+            'gone',
+            'host-a',
+            22,
+            runner,
+            MagicMock(),
+        )
         replacement = _pod('replacement')
         client = MagicMock()
         client.get_pod.side_effect = RunPodAPIError('not found', 404)
         client.find_pod_by_name.return_value = replacement
         self.assertEqual(
-            runtime._select_pod(self.state, client, 'model'), replacement
+            runtime._select_pod(self.state, client, 'model', runner),
+            replacement,
         )
         self.assertEqual(
             (self.manager.state_dir / 'runtime.pod-id').read_text(),
             'replacement\n',
+        )
+        self.assertFalse(
+            (self.manager.state_dir / 'runtime.ssh-endpoint.json').exists()
+        )
+
+    def test_replacement_clears_stale_endpoint_after_old_pod_404(self) -> None:
+        runner = MagicMock(return_value=SimpleNamespace(returncode=0))
+        prepare_endpoint(
+            self.manager.state_dir,
+            'deleted-pod',
+            'host-a',
+            22,
+            runner,
+            MagicMock(),
+        )
+        client = MagicMock()
+        client.get_pod.side_effect = RunPodAPIError('not found', 404)
+        runtime._forget_endpoint_after_confirmed_replacement(
+            self.state, client, 'replacement', runner
+        )
+        self.assertFalse(
+            (self.manager.state_dir / 'runtime.ssh-endpoint.json').exists()
+        )
+        client.get_pod.assert_called_once_with('deleted-pod')
+
+    def test_replacement_clears_chained_stale_pod_state(self) -> None:
+        self.state.write_pod_id('first-deleted-pod')
+        runner = MagicMock(return_value=SimpleNamespace(returncode=0))
+        prepare_endpoint(
+            self.manager.state_dir,
+            'second-deleted-pod',
+            'host-a',
+            22,
+            runner,
+            MagicMock(),
+        )
+        client = MagicMock()
+        client.get_pod.side_effect = [
+            RunPodAPIError('not found', 404),
+            RunPodAPIError('not found', 404),
+        ]
+        client.find_pod_by_name.return_value = _pod('replacement')
+        self.assertEqual(
+            runtime._select_pod(self.state, client, 'model', runner),
+            _pod('replacement'),
+        )
+        self.assertEqual(
+            (self.manager.state_dir / 'runtime.pod-id').read_text(),
+            'replacement\n',
+        )
+        self.assertFalse(
+            (self.manager.state_dir / 'runtime.ssh-endpoint.json').exists()
+        )
+        self.assertEqual(
+            client.get_pod.call_args_list,
+            [
+                call('first-deleted-pod'),
+                call('second-deleted-pod'),
+            ],
         )
 
     def test_down_stops_persisted_pod_and_retains_identity(self) -> None:
