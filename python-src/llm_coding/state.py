@@ -2,6 +2,7 @@
 
 import errno
 import fcntl
+import json
 import os
 import tempfile
 import time
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 POD_STATE_FILE = 'runtime.pod-id'
+POD_SPEC_FILE = 'runtime.pod-spec.json'
 ACTIVATION_FAILURE_FILE = 'runtime.activation-error'
 ACTIVATION_STATUS_FILE = 'runtime.activation-status'
 LIFECYCLE_LOCK_FILE = 'runtime.lock'
@@ -177,6 +179,47 @@ class FileStateStore:
             (self.directory / POD_STATE_FILE).unlink(missing_ok=True)
         except OSError as exc:
             raise RuntimeError('Cannot clear persisted RunPod state') from exc
+
+    def read_pod_spec(self) -> str | None:
+        path = self.directory / POD_SPEC_FILE
+        if not path.exists():
+            return None
+        try:
+            value = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f'Persisted RunPod specification at {path} is invalid'
+            ) from exc
+        fingerprint = (
+            value.get('fingerprint') if isinstance(value, dict) else None
+        )
+        if not isinstance(fingerprint, str) or not fingerprint:
+            raise RuntimeError(
+                f'Persisted RunPod specification at {path} is invalid'
+            )
+        return fingerprint
+
+    def write_pod_spec(self, fingerprint: str) -> None:
+        if not fingerprint:
+            raise RuntimeError('Cannot persist an empty RunPod specification')
+        try:
+            atomic_write_private(
+                self.directory / POD_SPEC_FILE,
+                json.dumps({'fingerprint': fingerprint}, sort_keys=True)
+                + '\n',
+            )
+        except OSError as exc:
+            raise RuntimeError(
+                'Cannot persist selected RunPod specification'
+            ) from exc
+
+    def forget_pod_spec(self) -> None:
+        try:
+            (self.directory / POD_SPEC_FILE).unlink(missing_ok=True)
+        except OSError as exc:
+            raise RuntimeError(
+                'Cannot clear persisted RunPod specification'
+            ) from exc
 
     def clear_activation_failure(self) -> None:
         try:

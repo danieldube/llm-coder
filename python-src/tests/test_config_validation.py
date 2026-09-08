@@ -20,13 +20,10 @@ class TestConfigValidation(unittest.TestCase):
             'RUNPOD_SSH_KEY': '$HOME/.ssh/runpod_test',
             'RUNPOD_POD_NAME': 'test-pod',
             'RUNPOD_IMAGE': 'example.invalid/runtime:sha-test',
-            'RUNPOD_GPU_TYPE': 'NVIDIA L40S',
+            'MODEL': 'qwen3-coder-next-fp8',
             'OPENCODE_VERSION': '1.2.3',
             'VLLM_VERSION': '1.2.3',
             'VLLM_CUDA_VERSION': '129',
-            'MODEL_ID': 'org/model',
-            'SERVED_MODEL_NAME': 'model',
-            'MODEL_DISPLAY_NAME': 'Test Model',
         }
 
     def tearDown(self) -> None:
@@ -43,9 +40,9 @@ class TestConfigValidation(unittest.TestCase):
 
     def test_missing_and_placeholder_values_are_aggregated(self) -> None:
         with self.assertRaises(ConfigurationError) as raised:
-            self.parse({'RUNPOD_API_KEY': 'REPLACE_ME', 'MODEL_ID': ''})
+            self.parse({'RUNPOD_API_KEY': 'REPLACE_ME', 'MODEL': ''})
         message = str(raised.exception)
-        self.assertIn('MODEL_ID is required', message)
+        self.assertIn('MODEL is required', message)
         self.assertIn(
             'RUNPOD_API_KEY contains a documented placeholder', message
         )
@@ -91,36 +88,27 @@ class TestConfigValidation(unittest.TestCase):
                 self.assertRaises(ConfigurationError) as raised,
             ):
                 self.parse({'VLLM_GPU_MEMORY_UTILIZATION': value})
-            self.assertEqual(
+            self.assertIn(
+                'VLLM_GPU_MEMORY_UTILIZATION is selected internally by MODEL',
                 raised.exception.errors,
-                ('VLLM_GPU_MEMORY_UTILIZATION must be a finite number',),
             )
 
     def test_gpu_memory_utilization_range_boundaries(self) -> None:
         with self.assertRaises(ConfigurationError) as raised:
             self.parse({'VLLM_GPU_MEMORY_UTILIZATION': '0'})
-        self.assertEqual(
+        self.assertIn(
+            'VLLM_GPU_MEMORY_UTILIZATION is selected internally by MODEL',
             raised.exception.errors,
-            (
-                'VLLM_GPU_MEMORY_UTILIZATION must be greater than 0 '
-                'and at most 1',
-            ),
         )
 
-        for value in ('5e-324', '1'):
-            with self.subTest(value=value):
-                settings = self.parse({'VLLM_GPU_MEMORY_UTILIZATION': value})
-                self.assertEqual(
-                    settings.vllm_gpu_memory_utilization, float(value)
-                )
+        settings = self.parse()
+        self.assertEqual(settings.vllm_gpu_memory_utilization, 0.90)
 
     def test_boundaries_relationships_and_defaults(self) -> None:
         settings = self.parse(
             {
                 'LOCAL_PROXY_PORT': '1',
                 'LOCAL_TUNNEL_PORT': '65535',
-                'MAX_OUTPUT_TOKENS': '1',
-                'CONTEXT_SIZE': '1',
             }
         )
         self.assertEqual(settings.local_proxy_port, 1)
@@ -132,6 +120,26 @@ class TestConfigValidation(unittest.TestCase):
         settings = self.parse()
         self.assertEqual(
             settings.runpod_ssh_key, Path.home() / '.ssh' / 'runpod_test'
+        )
+
+    def test_model_profile_resolves_h200_runtime_contract(self) -> None:
+        settings = self.parse()
+        self.assertEqual(settings.model_id, 'Qwen/Qwen3-Coder-Next-FP8')
+        self.assertEqual(
+            settings.model_revision,
+            'da6e2ed27304dd39abadd9c82ef50e8de67bdd4c',
+        )
+        self.assertEqual(settings.runpod_gpu_type, 'NVIDIA H200')
+        self.assertEqual(settings.runpod_gpu_count, 1)
+        self.assertEqual(settings.context_size, 32768)
+        self.assertEqual(settings.vllm_tool_call_parser, 'qwen3_coder')
+
+    def test_model_owned_settings_are_rejected(self) -> None:
+        with self.assertRaises(ConfigurationError) as raised:
+            self.parse({'RUNPOD_GPU_TYPE': 'NVIDIA L40S'})
+        self.assertIn(
+            'RUNPOD_GPU_TYPE is selected internally by MODEL',
+            raised.exception.errors,
         )
 
     def test_checked_in_example_requires_a_runtime_image(self) -> None:

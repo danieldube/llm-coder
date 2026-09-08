@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from .models import model_spec
+
 
 class ConfigurationError(ValueError):
     """Raised with every configuration problem found in one parse."""
@@ -27,6 +29,8 @@ class Settings:
     runpod_pod_name: str
     runpod_image: str
     runpod_gpu_type: str
+    model: str = ''
+    runpod_gpu_count: int = 1
     runpod_cloud_type: str = 'SECURE'
     runpod_container_registry_auth_id: str = ''
     runpod_container_disk_gb: int = 40
@@ -46,6 +50,7 @@ class Settings:
     max_output_tokens: int = 16384
     vllm_gpu_memory_utilization: float = 0.92
     vllm_tool_call_parser: str = 'qwen3_xml'
+    vllm_tensor_parallel_size: int = 1
     remote_vllm_port: int = 8000
     local_proxy_port: int = 18000
     local_tunnel_port: int = 18001
@@ -71,13 +76,10 @@ _REQUIRED = (
     'RUNPOD_SSH_KEY',
     'RUNPOD_POD_NAME',
     'RUNPOD_IMAGE',
-    'RUNPOD_GPU_TYPE',
+    'MODEL',
     'OPENCODE_VERSION',
     'VLLM_VERSION',
     'VLLM_CUDA_VERSION',
-    'MODEL_ID',
-    'SERVED_MODEL_NAME',
-    'MODEL_DISPLAY_NAME',
 )
 _PLACEHOLDERS = {'REPLACE_ME', 'CHANGEME', 'YOUR_API_KEY', '<API_KEY>'}
 
@@ -181,8 +183,27 @@ def parse_settings(
             'VLLM_GPU_MEMORY_UTILIZATION must be greater than 0 and at most 1'
         )
 
-    context = integer('CONTEXT_SIZE', 65536, 1, 10_000_000)
-    output = integer('MAX_OUTPUT_TOKENS', 16384, 1, 10_000_000)
+    profile_name = text('MODEL')
+    try:
+        profile = model_spec(profile_name)
+    except ValueError as exc:
+        errors.append(str(exc))
+        profile = None
+    for key in (
+        'RUNPOD_GPU_TYPE',
+        'MODEL_ID',
+        'MODEL_REVISION',
+        'SERVED_MODEL_NAME',
+        'MODEL_DISPLAY_NAME',
+        'CONTEXT_SIZE',
+        'MAX_OUTPUT_TOKENS',
+        'VLLM_GPU_MEMORY_UTILIZATION',
+        'VLLM_TOOL_CALL_PARSER',
+    ):
+        if raw.get(key, '').strip():
+            errors.append(f'{key} is selected internally by MODEL')
+    context = profile.context_size if profile else 65536
+    output = profile.max_output_tokens if profile else 16384
     proxy = integer('LOCAL_PROXY_PORT', 18000, 1, 65535)
     tunnel = integer('LOCAL_TUNNEL_PORT', 18001, 1, 65535)
     remote = integer('REMOTE_VLLM_PORT', 8000, 1, 65535)
@@ -202,7 +223,9 @@ def parse_settings(
         runpod_ssh_key=path('RUNPOD_SSH_KEY'),
         runpod_pod_name=text('RUNPOD_POD_NAME'),
         runpod_image=text('RUNPOD_IMAGE'),
-        runpod_gpu_type=text('RUNPOD_GPU_TYPE'),
+        runpod_gpu_type=profile.runpod_gpu_type if profile else '',
+        model=profile_name,
+        runpod_gpu_count=profile.runpod_gpu_count if profile else 1,
         runpod_cloud_type=cloud,
         runpod_container_registry_auth_id=text(
             'RUNPOD_CONTAINER_REGISTRY_AUTH_ID'
@@ -220,14 +243,21 @@ def parse_settings(
         opencode_version=text('OPENCODE_VERSION'),
         vllm_version=text('VLLM_VERSION'),
         vllm_cuda_version=text('VLLM_CUDA_VERSION'),
-        model_id=text('MODEL_ID'),
-        model_revision=text('MODEL_REVISION'),
-        served_model_name=text('SERVED_MODEL_NAME'),
-        model_display_name=text('MODEL_DISPLAY_NAME'),
+        model_id=profile.model_id if profile else '',
+        model_revision=profile.model_revision if profile else '',
+        served_model_name=profile.served_model_name if profile else '',
+        model_display_name=profile.display_name if profile else '',
         context_size=context,
         max_output_tokens=output,
-        vllm_gpu_memory_utilization=utilization,
-        vllm_tool_call_parser=text('VLLM_TOOL_CALL_PARSER', 'qwen3_xml'),
+        vllm_gpu_memory_utilization=(
+            profile.gpu_memory_utilization if profile else utilization
+        ),
+        vllm_tool_call_parser=(
+            profile.tool_call_parser if profile else 'qwen3_xml'
+        ),
+        vllm_tensor_parallel_size=(
+            profile.tensor_parallel_size if profile else 1
+        ),
         remote_vllm_port=remote,
         local_proxy_port=proxy,
         local_tunnel_port=tunnel,

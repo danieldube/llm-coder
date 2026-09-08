@@ -377,6 +377,28 @@ class TestPersistedPodIdentity(unittest.TestCase):
             'pod-1\n',
         )
 
+    def test_incompatible_pod_is_stopped_and_replaced(self) -> None:
+        config = _settings(self.manager.state_dir)
+        client = MagicMock()
+        client.create_pod.return_value = 'replacement'
+
+        replacement = runtime._replace_pod(
+            self.state,
+            client,
+            _pod('old'),
+            config,
+            'ssh-ed25519 public',
+            MagicMock(),
+        )
+
+        self.assertEqual(replacement, 'replacement')
+        client.stop_pod.assert_called_once_with('old')
+        self.assertEqual(
+            (self.manager.state_dir / 'runtime.pod-id').read_text(),
+            'replacement\n',
+        )
+        self.assertIsNotNone(self.state.read_pod_spec())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,8 +9,9 @@ SERVED_MODEL_NAME="$5"
 CONTEXT_SIZE="$6"
 GPU_MEMORY_UTILIZATION="$7"
 TOOL_CALL_PARSER="$8"
-PORT="$9"
-START_TIMEOUT="${10}"
+TENSOR_PARALLEL_SIZE="$9"
+PORT="${10}"
+START_TIMEOUT="${11}"
 
 RUNTIME_ROOT=/workspace/llm-coding
 HF_HOME="${RUNTIME_ROOT}/huggingface"
@@ -50,6 +51,7 @@ signature="$(printf '%s\n' \
     "${CONTEXT_SIZE}" \
     "${GPU_MEMORY_UTILIZATION}" \
     "${TOOL_CALL_PARSER}" \
+    "${TENSOR_PARALLEL_SIZE}" \
     'log-requests' \
     | sha256sum | awk '{print $1}')"
 
@@ -90,6 +92,7 @@ nohup "${LAUNCHER}" \
     "${CONTEXT_SIZE}" \
     "${GPU_MEMORY_UTILIZATION}" \
     "${TOOL_CALL_PARSER}" \
+    "${TENSOR_PARALLEL_SIZE}" \
     "${PORT}" \
     "${LOG_FILE}" \
     > /dev/null 2>&1 < /dev/null &

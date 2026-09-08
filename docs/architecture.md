@@ -56,7 +56,10 @@ while OpenCode starts. `llm-up` ensures generated units match configuration,
 opens `/v1/models` on the socket, and monitors activation. It also recovers an
 active proxy whose tunnel no longer responds.
 
-Pod selection uses `runtime.pod-id` first. Only a missing selection or a
+Pod selection uses `runtime.pod-id` first. A persisted Pod specification
+fingerprint must match the selected internal model contract; otherwise startup
+stops the old Pod and creates a replacement without deleting the old Pod or
+storage. Only a missing selection or a
 provider 404 permits exact-name adoption; multiple matches fail. A new Pod is
 created only by startup when no match exists. Shutdown uses the same selection
 logic and can adopt a named Pod; status never adopts or replaces a selection.
@@ -121,6 +124,7 @@ See [configuration paths](configuration.md#paths) for XDG locations.
 | State file | Role | Retained after shutdown |
 | --- | --- | --- |
 | `runtime.pod-id` | Selected provider identity; atomic, mode 0600 | Yes |
+| `runtime.pod-spec.json` | Fingerprint of the model and immutable Pod request | Yes |
 | `runtime.ssh-endpoint.json` | Pod ID, host, port; atomic, mode 0600 | Yes |
 | `known_hosts` | Installation-specific SSH trust, mode 0600 | Yes |
 | `runtime.lock` | Lifecycle lock and last operation label, mode 0600 | Yes |

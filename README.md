@@ -113,8 +113,11 @@ is reported as degraded, including after normal idle shutdown.
 version, socket enablement/activity, and ACP registration. Without `--activate`
 it does not authenticate against RunPod or test inference.
 
-For GPU capacity failures, retry later. Changing the GPU or image setting does
-not modify an existing selected Pod. See [configuration changes](docs/configuration.md#applying-changes).
+Select a reviewed runtime with `MODEL` in `config.env`. The default
+`qwen3-coder-next-fp8` profile requests one NVIDIA H200 and configures vLLM for
+Qwen3-Coder-Next. Changing `MODEL` automatically stops an incompatible selected
+Pod and creates a replacement; it does not delete the old Pod or its storage.
+See [configuration changes](docs/configuration.md#applying-changes).
 Remote startup logs are at `/workspace/llm-coding/vllm.log`; request logging
 is enabled, so review logs for sensitive content before sharing.
 

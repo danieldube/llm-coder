@@ -1,6 +1,8 @@
 """Lifecycle orchestration for the on-demand RunPod endpoint."""
 
+import hashlib
 import importlib.resources
+import json
 import subprocess
 import sys
 import time
@@ -36,6 +38,7 @@ from .ssh import (
     endpoint_pod_id,
     exec_tunnel,
     forget_endpoint_for_deleted_pod,
+    forget_endpoint_for_replacement,
     is_host_key_mismatch,
     prepare_endpoint,
     public_key_path,
@@ -235,6 +238,52 @@ def _create_pod_or_raise(
         ) from None
 
 
+def _pod_spec_fingerprint(config: Settings, public_key: str) -> str:
+    """Hash every setting that makes an existing Pod unsafe to reuse."""
+    value = {
+        'cloud_type': config.runpod_cloud_type,
+        'container_disk_gb': config.runpod_container_disk_gb,
+        'gpu_count': config.runpod_gpu_count,
+        'gpu_type': config.runpod_gpu_type,
+        'image': config.runpod_image,
+        'min_ram_per_gpu': config.runpod_min_ram_per_gpu,
+        'min_vcpu_per_gpu': config.runpod_min_vcpu_per_gpu,
+        'model': config.model,
+        'model_id': config.model_id,
+        'model_revision': config.model_revision,
+        'network_volume_id': config.runpod_network_volume_id,
+        'ssh_public_key': hashlib.sha256(public_key.encode()).hexdigest(),
+        'tensor_parallel_size': config.vllm_tensor_parallel_size,
+        'tool_call_parser': config.vllm_tool_call_parser,
+        'vllm_cuda_version': config.vllm_cuda_version,
+        'vllm_gpu_memory_utilization': config.vllm_gpu_memory_utilization,
+        'vllm_version': config.vllm_version,
+        'volume_gb': config.runpod_volume_gb,
+        'volume_mount_path': str(config.runpod_volume_mount_path),
+    }
+    encoded = json.dumps(value, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _replace_pod(
+    state: FileStateStore,
+    client: PodProvider,
+    pod: dict[str, Any],
+    config: Settings,
+    public_key: str,
+    run: CommandRunner,
+) -> str:
+    """Stop an incompatible Pod and select a replacement after creation."""
+    old_id = str(pod['id'])
+    if pod.get('desiredStatus') == 'RUNNING':
+        client.stop_pod(old_id)
+    new_id = _create_pod_or_raise(client, config, public_key)
+    forget_endpoint_for_replacement(state.directory, old_id, run)
+    state.write_pod_id(new_id)
+    state.write_pod_spec(_pod_spec_fingerprint(config, public_key))
+    return new_id
+
+
 def _select_pod(
     state: RuntimeState, client: PodProvider, name: str, run: CommandRunner
 ) -> dict[str, Any] | None:
@@ -254,6 +303,7 @@ def _select_pod(
                     state, client, persisted_id, run
                 )
             state.forget_pod_id()
+            state.forget_pod_spec()
     pod = client.find_pod_by_name(name)
     if pod is not None:
         state.write_pod_id(str(pod['id']))
@@ -295,25 +345,41 @@ def up(
         state.record_activation_failure,
     ):
         ensure_acp_registration(config)
-        public_key = public_key_path(config.runpod_ssh_key)
-        if not public_key.is_file():
-            raise RuntimeError(f'SSH public key not found: {public_key}')
+        public_key_pathname = public_key_path(config.runpod_ssh_key)
+        if not public_key_pathname.is_file():
+            raise RuntimeError(
+                f'SSH public key not found: {public_key_pathname}'
+            )
+        public_key = public_key_pathname.read_text().strip()
+        if not public_key:
+            raise RuntimeError(
+                f'SSH public key is empty: {public_key_pathname}'
+            )
         state.set_activation_status('Checking the RunPod pod')
         client = provider or RunPodClient(config.runpod_api_key)
         pod = _select_pod(state, client, config.runpod_pod_name, deps.run)
         if pod is None:
             state.set_activation_status('Creating a RunPod pod')
-            pod_id = _create_pod_or_raise(
-                client, config, public_key.read_text().strip()
-            )
+            pod_id = _create_pod_or_raise(client, config, public_key)
             state.write_pod_id(pod_id)
+            state.write_pod_spec(_pod_spec_fingerprint(config, public_key))
         else:
             pod_id = str(pod['id'])
-            if pod.get('desiredStatus') == 'TERMINATED':
+            expected_spec = _pod_spec_fingerprint(config, public_key)
+            if state.read_pod_spec() != expected_spec:
+                state.set_activation_status(
+                    'Replacing an incompatible RunPod pod for the selected '
+                    'model'
+                )
+                pod_id = _replace_pod(
+                    state, client, pod, config, public_key, deps.run
+                )
+                pod = None
+            if pod is not None and pod.get('desiredStatus') == 'TERMINATED':
                 raise RuntimeError(
                     f'RunPod {pod_id} is TERMINATED; delete it or change RUNPOD_POD_NAME'  # noqa: E501
                 )
-            if pod.get('desiredStatus') == 'EXITED':
+            if pod is not None and pod.get('desiredStatus') == 'EXITED':
                 state.set_activation_status('Starting the stopped RunPod pod')
                 _start_pod_or_raise(client, pod_id, config)
         _forget_endpoint_after_confirmed_replacement(
@@ -387,6 +453,7 @@ def up(
                     str(config.context_size),
                     str(config.vllm_gpu_memory_utilization),
                     config.vllm_tool_call_parser,
+                    str(config.vllm_tensor_parallel_size),
                     str(config.remote_vllm_port),
                     str(config.vllm_start_timeout_seconds),
                 ],

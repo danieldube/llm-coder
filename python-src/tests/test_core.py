@@ -43,13 +43,15 @@ def settings(root: Path) -> Settings:
         runpod_ssh_key=root / 'id_ed25519',
         runpod_pod_name='model',
         runpod_image='image',
-        runpod_gpu_type='gpu',
+        runpod_gpu_type='NVIDIA L40S',
+        model='qwen3-coder-30b-a3b-fp8',
         opencode_version='1',
         vllm_version='1',
         vllm_cuda_version='124',
-        model_id='model',
-        served_model_name='served',
-        model_display_name='Served Model',
+        model_id='Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
+        model_revision='e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
+        served_model_name='qwen3-coder',
+        model_display_name='Qwen3-Coder 30B A3B FP8',
     )
 
 
