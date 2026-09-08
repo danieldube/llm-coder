@@ -3,8 +3,8 @@ set -euo pipefail
 
 VLLM_VENV=/opt/llm-coding/vllm
 
-if [[ "$#" -ne 8 ]]; then
-    echo "Usage: ${0##*/} MODEL_ID MODEL_REVISION SERVED_MODEL_NAME CONTEXT_SIZE GPU_MEMORY_UTILIZATION TOOL_CALL_PARSER PORT LOG_FILE" >&2
+if [[ "$#" -ne 9 ]]; then
+    echo "Usage: ${0##*/} MODEL_ID MODEL_REVISION SERVED_MODEL_NAME CONTEXT_SIZE GPU_MEMORY_UTILIZATION TOOL_CALL_PARSER TENSOR_PARALLEL_SIZE PORT LOG_FILE" >&2
     exit 2
 fi
 
@@ -14,8 +14,9 @@ SERVED_MODEL_NAME="$3"
 CONTEXT_SIZE="$4"
 GPU_MEMORY_UTILIZATION="$5"
 TOOL_CALL_PARSER="$6"
-PORT="$7"
-LOG_FILE="$8"
+TENSOR_PARALLEL_SIZE="$7"
+PORT="$8"
+LOG_FILE="$9"
 
 if ! "${VLLM_VENV}/bin/python" - <<'PY'
 import torch
@@ -40,4 +41,5 @@ exec "${VLLM_VENV}/bin/vllm" serve "${MODEL_ID}" \
     --enable-log-requests \
     --enable-auto-tool-choice \
     --tool-call-parser "${TOOL_CALL_PARSER}" \
+    --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}" \
     >"${LOG_FILE}" 2>&1

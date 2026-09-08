@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ConfigManager, ConfigurationError, Settings, parse_settings
+from .models import MODEL_SPECS
 from .opencode import create_config
 from .runpod import RunPodAPIError, RunPodClient, RunPodProtocolError
 
@@ -47,11 +48,38 @@ class LegacySettingsAdapter:
         ]
         if errors:
             raise ConfigurationError(errors)
+        normalized = dict(self.values)
+        selected = normalized.get('MODEL')
+        if selected is None:
+            matching = [
+                spec.key
+                for spec in MODEL_SPECS.values()
+                if normalized.get('MODEL_ID') == spec.model_id
+            ]
+            if len(matching) == 1:
+                selected = matching[0]
+                normalized['MODEL'] = selected
+        if selected in MODEL_SPECS:
+            for key in (
+                'RUNPOD_IMAGE',
+                'RUNPOD_GPU_TYPE',
+                'MODEL_ID',
+                'MODEL_REVISION',
+                'SERVED_MODEL_NAME',
+                'MODEL_DISPLAY_NAME',
+                'CONTEXT_SIZE',
+                'MAX_OUTPUT_TOKENS',
+                'VLLM_GPU_MEMORY_UTILIZATION',
+                'VLLM_TOOL_CALL_PARSER',
+                'VLLM_VERSION',
+                'VLLM_CUDA_VERSION',
+            ):
+                normalized.pop(key, None)
         empty_file = Path('/dev/null')
         return parse_settings(
             empty_file,
             empty_file,
-            environ=self.values,
+            environ=normalized,
         )
 
 

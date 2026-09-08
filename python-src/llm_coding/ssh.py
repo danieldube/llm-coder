@@ -98,6 +98,34 @@ def forget_endpoint_for_deleted_pod(
         ) from exc
 
 
+def forget_endpoint_for_replacement(
+    state_dir: Path, pod_id: str, run: CommandRunner
+) -> None:
+    """Forget a verified old Pod endpoint before selecting its replacement."""
+    previous = _read_endpoint(state_dir)
+    if previous is None:
+        return
+    if previous['pod_id'] != pod_id:
+        raise RuntimeError(
+            'Refusing to clear SSH endpoint state for RunPod replacement: '
+            f'it belongs to RunPod {previous["pod_id"]}, not {pod_id}'
+        )
+    old_name = _endpoint_name(previous['host'], previous['port'])
+    result = run(
+        ['ssh-keygen', '-R', old_name, '-f', str(_known_hosts(state_dir))],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f'Could not remove replaced SSH endpoint {old_name}'
+        )
+    try:
+        (state_dir / ENDPOINT_STATE_FILE).unlink()
+    except OSError as exc:
+        raise RuntimeError('Cannot clear replaced SSH endpoint state') from exc
+
+
 def prepare_endpoint(
     state_dir: Path,
     pod_id: str,

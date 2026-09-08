@@ -192,7 +192,7 @@ def pod_create_body(config: Settings, public_key: str) -> dict[str, Any]:
         'computeType': 'GPU',
         'gpuTypeIds': [config.runpod_gpu_type],
         'gpuTypePriority': 'availability',
-        'gpuCount': 1,
+        'gpuCount': config.runpod_gpu_count,
         'interruptible': False,
         'supportPublicIp': True,
         'containerDiskInGb': config.runpod_container_disk_gb,

@@ -265,6 +265,7 @@ class TestPersistedPodIdentity(unittest.TestCase):
 
     def test_missing_persisted_pod_allows_deliberate_replacement(self) -> None:
         self.state.write_pod_id('gone')
+        self.state.write_pod_spec('old-specification')
         runner = MagicMock(return_value=SimpleNamespace(returncode=0))
         prepare_endpoint(
             self.manager.state_dir,
@@ -289,6 +290,7 @@ class TestPersistedPodIdentity(unittest.TestCase):
         self.assertFalse(
             (self.manager.state_dir / 'runtime.ssh-endpoint.json').exists()
         )
+        self.assertIsNone(self.state.read_pod_spec())
 
     def test_replacement_clears_stale_endpoint_after_old_pod_404(self) -> None:
         runner = MagicMock(return_value=SimpleNamespace(returncode=0))
@@ -376,6 +378,28 @@ class TestPersistedPodIdentity(unittest.TestCase):
             (self.manager.state_dir / 'runtime.pod-id').read_text(),
             'pod-1\n',
         )
+
+    def test_incompatible_pod_is_stopped_and_replaced(self) -> None:
+        config = _settings(self.manager.state_dir)
+        client = MagicMock()
+        client.create_pod.return_value = 'replacement'
+
+        replacement = runtime._replace_pod(
+            self.state,
+            client,
+            _pod('old'),
+            config,
+            'ssh-ed25519 public',
+            MagicMock(),
+        )
+
+        self.assertEqual(replacement, 'replacement')
+        client.stop_pod.assert_called_once_with('old')
+        self.assertEqual(
+            (self.manager.state_dir / 'runtime.pod-id').read_text(),
+            'replacement\n',
+        )
+        self.assertIsNotNone(self.state.read_pod_spec())
 
 
 if __name__ == '__main__':

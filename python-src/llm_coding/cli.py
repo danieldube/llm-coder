@@ -514,7 +514,8 @@ def llm_status() -> None:
     logger.info('Checking LLM runtime status...')
     try:
         manager = ConfigManager()
-        result = inspect_runtime(manager.load_settings(), manager.state_dir)
+        config = manager.load_settings()
+        result = inspect_runtime(config, manager.state_dir)
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(
             f'Status inspection failed: {exc}'
@@ -528,6 +529,11 @@ def llm_status() -> None:
             suffix = f' ({unit.detail})'
         print(f'{label:<12} {unit.state.value}{suffix}')
     provider = result.provider
+    print(f'{"Model":<12} {config.model}')
+    print(
+        f'{"Expected GPU":<12} '
+        f'{config.runpod_gpu_count}x {config.runpod_gpu_type}'
+    )
     if provider.state is ProviderState.AVAILABLE:
         print(f'{"RunPod":<12} {provider.lifecycle}')
         print(f'{"Pod ID":<12} {provider.pod_id}')

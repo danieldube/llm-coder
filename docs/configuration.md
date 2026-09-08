@@ -43,22 +43,31 @@ The loader does not enforce permissions on existing files. See the
 ## Settings
 
 Required nonempty strings: `RUNPOD_API_KEY`, `RUNPOD_SSH_KEY`,
-`RUNPOD_POD_NAME`, `RUNPOD_IMAGE`, `RUNPOD_GPU_TYPE`, `OPENCODE_VERSION`,
-`VLLM_VERSION`, `VLLM_CUDA_VERSION`, `MODEL_ID`, `SERVED_MODEL_NAME`, and
-`MODEL_DISPLAY_NAME`. API key placeholders `REPLACE_ME`, `CHANGEME`,
+`RUNPOD_POD_NAME`, `RUNPOD_IMAGE_REPOSITORY`, `MODEL`, and
+`OPENCODE_VERSION`. API key placeholders `REPLACE_ME`, `CHANGEME`,
 `YOUR_API_KEY`, and `<API_KEY>` are rejected case-insensitively. The documented
-`RUNPOD_IMAGE` placeholder and the `runpod/pytorch` base-image
+`RUNPOD_IMAGE_REPOSITORY` placeholder and the `runpod/pytorch` base-image
 family are rejected before a Pod is created. Other image references are not
 checked against a registry or inspected for the required launcher locally.
 
-The [example](../python-src/llm_coding/assets/config/config.env.example) supplies
-release/model pins;
-required settings have no usable fallback when omitted from configuration.
-The tables below list parser defaults for optional settings.
+`MODEL` selects a reviewed internal model contract. It owns the Hugging Face
+ID, served name, context/output limits, vLLM/CUDA versions, parser and memory
+settings, GPU type/count, and tensor parallelism. Direct settings for those
+values are rejected to prevent a model from starting on incompatible hardware.
+The available keys are `qwen3-coder-30b-a3b-fp8` and
+`qwen3-coder-next-fp8`; the latter requests one `NVIDIA H200` (141 GB), uses a
+32K context, and starts vLLM with the `qwen3_coder` parser.
+
+`RUNPOD_IMAGE_REPOSITORY` supplies only the registry/repository prefix. The
+controller appends `:latest`, so a Pod uses the most recently published runtime
+image. This tag is mutable: a later image publication can replace it without a
+configuration change. The publishing workflow updates it whenever Docker inputs
+or the model catalog reach `main`.
 
 | Provider setting | Default | Contract |
 | --- | --- | --- |
 | `RUNPOD_CLOUD_TYPE` | `SECURE` | `SECURE` or `COMMUNITY` |
+| `RUNPOD_IMAGE_REPOSITORY` | Required | Runtime-image repository; the model selects its tag |
 | `RUNPOD_CONTAINER_REGISTRY_AUTH_ID` | Empty | RunPod registry credential ID, never a token |
 | `RUNPOD_CONTAINER_DISK_GB` | `40` | 1–2048 GiB |
 | `RUNPOD_VOLUME_GB` | `100` | 1–65536 GiB; used without a network volume |
@@ -67,27 +76,21 @@ The tables below list parser defaults for optional settings.
 | `RUNPOD_MIN_VCPU_PER_GPU` | `8` | 1–1024 |
 | `RUNPOD_NETWORK_VOLUME_ID` | Empty | Existing network volume; replaces `volumeInGb` in create request |
 
-The create request always uses one GPU, `interruptible=false`, public IP
-support, and `22/tcp`. `RUNPOD_GPU_TYPE` is sent as a RunPod GPU type ID.
+The create request uses the selected model's GPU count/type,
+`interruptible=false`, public IP support, and `22/tcp` only.
 The selected image must include this project's vLLM launcher and the RunPod
 SSH startup integration.
 
-| Inference setting | Default | Contract |
-| --- | --- | --- |
-| `MODEL_REVISION` | Empty | Example pins a model commit; pin a valid revision for reproducibility |
-| `CONTEXT_SIZE` | `65536` | 1–10,000,000 tokens; vLLM context and OpenCode context limit |
-| `MAX_OUTPUT_TOKENS` | `16384` | 1–10,000,000, at most context; OpenCode model metadata only |
-| `VLLM_GPU_MEMORY_UTILIZATION` | `0.92` | Finite number greater than 0 and at most 1 |
-| `VLLM_TOOL_CALL_PARSER` | `qwen3_xml` | Passed directly to vLLM; parser availability is not validated |
+| Inference setting | Contract |
+| --- | --- |
+| `MODEL` | Required reviewed model key; resolves model and hardware together |
 | `REMOTE_VLLM_PORT` | `8000` | 1–65535; remote loopback listener |
 | `LOCAL_PROXY_PORT` | `18000` | 1–65535; stable host endpoint |
 | `LOCAL_TUNNEL_PORT` | `18001` | 1–65535; must differ from proxy port |
 
-`VLLM_VERSION` and `VLLM_CUDA_VERSION` describe the prebuilt image. Changing
-them does not install or verify a different vLLM/CUDA build. The launcher
-always passes `--revision`, including when `MODEL_REVISION` is empty; empty
-revision behavior is not validated locally. GPU memory and model support are
-runtime constraints beyond these numeric ranges.
+The selected model profile pins the vLLM/CUDA versions and model revision that
+its runtime image contains. The launcher always passes that revision. GPU memory
+and model support are runtime constraints beyond these numeric ranges.
 
 | Lifecycle/integration setting | Default | Contract |
 | --- | --- | --- |
@@ -113,15 +116,11 @@ installation alone. OpenCode configuration is regenerated on launch and
 successful activation. Existing configuration files are never migrated or
 replaced automatically with new examples.
 
-Image, GPU, storage, cloud, and SSH public-key settings affect newly created
-Pods only. Existing Pods are resumed without patching their definition;
-renaming `RUNPOD_POD_NAME` does not override a live persisted Pod ID.
-There is no Pod replacement command. If replacement is necessary, stop the
-installation, confirm the old Pod's disposition and storage retention in
-RunPod, and reconcile both Pod identity and SSH endpoint state deliberately.
-A stale `runtime.ssh-endpoint.json` from another Pod prevents enrollment even
-if `runtime.pod-id` was cleared automatically after a 404. Do not bypass
-host-key verification or clear trust state simply to silence an error.
+The controller persists a fingerprint of the model and Pod definition. On
+`llm-up`, a selected model whose fingerprint differs from the current Pod stops
+that Pod and creates a replacement. It never deletes the old Pod or storage.
+The transition clears only that Pod's saved SSH endpoint before enrolling the
+replacement through the normal fail-closed host-key flow.
 
 Changing `JETBRAINS_AGENT_NAME` creates a new entry without removing the old
 name. Remove the old integration before renaming if it should not remain.

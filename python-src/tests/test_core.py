@@ -42,14 +42,17 @@ def settings(root: Path) -> Settings:
         runpod_api_key='secret',
         runpod_ssh_key=root / 'id_ed25519',
         runpod_pod_name='model',
-        runpod_image='image',
-        runpod_gpu_type='gpu',
+        runpod_image='image-repository:latest',
+        runpod_gpu_type='NVIDIA L40S',
+        runpod_image_repository='image-repository',
+        model='qwen3-coder-30b-a3b-fp8',
         opencode_version='1',
-        vllm_version='1',
-        vllm_cuda_version='124',
-        model_id='model',
-        served_model_name='served',
-        model_display_name='Served Model',
+        vllm_version='0.28.0',
+        vllm_cuda_version='129',
+        model_id='Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
+        model_revision='e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
+        served_model_name='qwen3-coder',
+        model_display_name='Qwen3-Coder 30B A3B FP8',
     )
 
 
@@ -164,6 +167,16 @@ class FocusedModuleTests(unittest.TestCase):
         self.assertIn(
             'Starting prebuilt vLLM',
             runtime._asset_text('remote', 'ensure-vllm.sh'),
+        )
+
+    def test_remote_launcher_includes_tensor_parallel_size(self) -> None:
+        remote = runtime._asset_text('remote', 'ensure-vllm.sh')
+        launcher = (
+            Path(__file__).parents[2] / 'docker' / 'start-vllm.sh'
+        ).read_text()
+        self.assertIn('TENSOR_PARALLEL_SIZE="$9"', remote)
+        self.assertIn(
+            '--tensor-parallel-size "${TENSOR_PARALLEL_SIZE}"', launcher
         )
 
     def test_create_pod_explains_only_known_capacity_failures(self) -> None:

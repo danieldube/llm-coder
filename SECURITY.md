@@ -59,6 +59,13 @@ OpenSSH enroll the replacement on first contact. A different pod identity,
 malformed local state, or failure to remove the precise old entry aborts the
 rotation.
 
+When a selected model's persisted Pod specification differs from the current
+model contract, the controller stops the old Pod, creates a replacement, and
+removes only the old Pod's recorded endpoint before enrolling the new one. It
+does not delete either Pod or any volume. This identity transition is allowed
+only by the model compatibility check while the lifecycle lock is held; an
+unrelated saved endpoint still fails closed.
+
 This policy protects continuity at stable endpoints and prevents an endpoint
 change from silently authorizing a different RunPod pod. The initial key at a
 newly assigned endpoint still relies on the authenticated RunPod control-plane
@@ -81,10 +88,11 @@ it does not delete credentials, Pod identity, or remote storage.
 Treat the RunPod base image, CUDA runtime, PyTorch/vLLM CUDA builds, model
 revision, and tool parser as one compatibility set when making changes. The
 base image uses a tag and transitive packages are resolved during image builds;
-SHA-derived image tags are not immutable. Use a published digest to select
-fixed image bytes. The controller does not validate the installed versions
-against local settings. Do not repair CUDA mismatches by copying individual
-CUDA shared libraries into the image.
+the controller deliberately selects the runtime repository's mutable `latest`
+tag. A later image publication can therefore change the bytes used by a newly
+created Pod. The controller does not validate the installed versions against
+local settings. Do not repair CUDA mismatches by copying individual CUDA shared
+libraries into the image.
 
 The runtime-image publishing workflow uses GitHub Actions' short-lived
 `GITHUB_TOKEN`. Do not add a personal GitHub token to repository or Actions
