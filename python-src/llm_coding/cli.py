@@ -529,9 +529,9 @@ def llm_status() -> None:
             suffix = f' ({unit.detail})'
         print(f'{label:<12} {unit.state.value}{suffix}')
     provider = result.provider
-    print(f'{'Model':<12} {config.model}')
+    print(f'{"Model":<12} {config.model}')
     print(
-        f'{'Expected GPU':<12} '
+        f'{"Expected GPU":<12} '
         f'{config.runpod_gpu_count}x {config.runpod_gpu_type}'
     )
     if provider.state is ProviderState.AVAILABLE:
