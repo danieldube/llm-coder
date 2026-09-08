@@ -132,6 +132,14 @@ def parse_settings(
     secret = raw.get('RUNPOD_API_KEY', '').strip()
     if secret.upper() in _PLACEHOLDERS:
         errors.append('RUNPOD_API_KEY contains a documented placeholder')
+    image = raw.get('RUNPOD_IMAGE', '').strip()
+    if 'REPLACE_WITH_' in image.upper():
+        errors.append('RUNPOD_IMAGE contains a documented placeholder')
+    if image.lower().startswith('runpod/pytorch:'):
+        errors.append(
+            'RUNPOD_IMAGE must reference an llm-coding runtime image, not a '
+            'runpod/pytorch base image'
+        )
 
     def text(key: str, default: str = '') -> str:
         return raw.get(key, default).strip()

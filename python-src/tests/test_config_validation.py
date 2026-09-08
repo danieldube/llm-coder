@@ -51,6 +51,26 @@ class TestConfigValidation(unittest.TestCase):
         )
         self.assertNotIn('REPLACE_ME', message)
 
+    def test_incompatible_runtime_image_values_are_rejected(self) -> None:
+        cases = {
+            'documented placeholder': (
+                'ghcr.io/example/runtime:sha-REPLACE_WITH_COMMIT',
+                'RUNPOD_IMAGE contains a documented placeholder',
+            ),
+            'RunPod base image': (
+                'runpod/pytorch:1.1.0-cu1290-torch291-ubuntu2404',
+                'RUNPOD_IMAGE must reference an llm-coding runtime image, '
+                'not a runpod/pytorch base image',
+            ),
+        }
+        for name, (image, expected) in cases.items():
+            with (
+                self.subTest(name=name),
+                self.assertRaises(ConfigurationError) as raised,
+            ):
+                self.parse({'RUNPOD_IMAGE': image})
+            self.assertEqual(raised.exception.errors, (expected,))
+
     def test_malformed_values_are_rejected(self) -> None:
         cases = {
             'LOCAL_PROXY_PORT': 'zero',
@@ -114,15 +134,19 @@ class TestConfigValidation(unittest.TestCase):
             settings.runpod_ssh_key, Path.home() / '.ssh' / 'runpod_test'
         )
 
-    def test_checked_in_example_is_valid_with_real_secret(self) -> None:
+    def test_checked_in_example_requires_a_runtime_image(self) -> None:
         root = Path(__file__).parents[2]
         examples = root / 'python-src/llm_coding/assets/config'
-        settings = parse_settings(
-            examples / 'config.env.example',
-            examples / 'secrets.env.example',
-            {'RUNPOD_API_KEY': 'real-test-token'},
+        with self.assertRaises(ConfigurationError) as raised:
+            parse_settings(
+                examples / 'config.env.example',
+                examples / 'secrets.env.example',
+                {'RUNPOD_API_KEY': 'real-test-token'},
+            )
+        self.assertEqual(
+            raised.exception.errors,
+            ('RUNPOD_IMAGE contains a documented placeholder',),
         )
-        self.assertEqual(settings.local_proxy_port, 18000)
 
 
 if __name__ == '__main__':

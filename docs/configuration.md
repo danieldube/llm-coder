@@ -46,8 +46,10 @@ Required nonempty strings: `RUNPOD_API_KEY`, `RUNPOD_SSH_KEY`,
 `RUNPOD_POD_NAME`, `RUNPOD_IMAGE`, `RUNPOD_GPU_TYPE`, `OPENCODE_VERSION`,
 `VLLM_VERSION`, `VLLM_CUDA_VERSION`, `MODEL_ID`, `SERVED_MODEL_NAME`, and
 `MODEL_DISPLAY_NAME`. API key placeholders `REPLACE_ME`, `CHANGEME`,
-`YOUR_API_KEY`, and `<API_KEY>` are rejected case-insensitively. Other
-placeholder strings, including the example image, are not rejected.
+`YOUR_API_KEY`, and `<API_KEY>` are rejected case-insensitively. The documented
+`RUNPOD_IMAGE` placeholder and the `runpod/pytorch` base-image
+family are rejected before a Pod is created. Other image references are not
+checked against a registry or inspected for the required launcher locally.
 
 The [example](../python-src/llm_coding/assets/config/config.env.example) supplies
 release/model pins;
