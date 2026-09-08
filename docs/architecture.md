@@ -150,6 +150,7 @@ OpenCode configuration is regenerated on wrapper launch and successful
 | Module | Responsibility |
 | --- | --- |
 | `config.py` | Immutable settings, parsing, validation, XDG paths |
+| `models.py` | Reviewed model, hardware, and vLLM launch contracts |
 | `runpod.py` | REST requests, response validation, Pod creation payload |
 | `systemd.py` | Authoritative unit renderer and user-systemd operations |
 | `ssh.py` | Host authentication, endpoint rotation, tunnel execution |

@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from llm_coding.config import ConfigurationError, Settings, parse_settings
+from llm_coding.runpod import pod_create_body
 
 
 class TestConfigValidation(unittest.TestCase):
@@ -133,6 +134,9 @@ class TestConfigValidation(unittest.TestCase):
         self.assertEqual(settings.runpod_gpu_count, 1)
         self.assertEqual(settings.context_size, 32768)
         self.assertEqual(settings.vllm_tool_call_parser, 'qwen3_coder')
+        body = pod_create_body(settings, 'ssh-ed25519 public')
+        self.assertEqual(body['gpuTypeIds'], ['NVIDIA H200'])
+        self.assertEqual(body['gpuCount'], 1)
 
     def test_model_owned_settings_are_rejected(self) -> None:
         with self.assertRaises(ConfigurationError) as raised:

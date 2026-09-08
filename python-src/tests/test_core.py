@@ -168,6 +168,16 @@ class FocusedModuleTests(unittest.TestCase):
             runtime._asset_text('remote', 'ensure-vllm.sh'),
         )
 
+    def test_remote_launcher_includes_tensor_parallel_size(self) -> None:
+        remote = runtime._asset_text('remote', 'ensure-vllm.sh')
+        launcher = (
+            Path(__file__).parents[2] / 'docker' / 'start-vllm.sh'
+        ).read_text()
+        self.assertIn('TENSOR_PARALLEL_SIZE="$9"', remote)
+        self.assertIn(
+            '--tensor-parallel-size "${TENSOR_PARALLEL_SIZE}"', launcher
+        )
+
     def test_create_pod_explains_only_known_capacity_failures(self) -> None:
         client = MagicMock()
         client.create_pod.side_effect = RunPodAPIError(

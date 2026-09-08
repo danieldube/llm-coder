@@ -59,6 +59,13 @@ OpenSSH enroll the replacement on first contact. A different pod identity,
 malformed local state, or failure to remove the precise old entry aborts the
 rotation.
 
+When a selected model's persisted Pod specification differs from the current
+model contract, the controller stops the old Pod, creates a replacement, and
+removes only the old Pod's recorded endpoint before enrolling the new one. It
+does not delete either Pod or any volume. This identity transition is allowed
+only by the model compatibility check while the lifecycle lock is held; an
+unrelated saved endpoint still fails closed.
+
 This policy protects continuity at stable endpoints and prevents an endpoint
 change from silently authorizing a different RunPod pod. The initial key at a
 newly assigned endpoint still relies on the authenticated RunPod control-plane

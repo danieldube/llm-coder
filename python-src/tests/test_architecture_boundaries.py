@@ -27,6 +27,17 @@ def _definitions(module: object) -> set[str]:
 
 
 class TestArchitectureBoundaries(unittest.TestCase):
+    def test_sources_use_python_311_syntax(self) -> None:
+        for path in (REPOSITORY_ROOT / 'python-src' / 'llm_coding').glob(
+            '*.py'
+        ):
+            with self.subTest(path=path):
+                ast.parse(
+                    path.read_text(),
+                    filename=str(path),
+                    feature_version=(3, 11),
+                )
+
     def test_config_manager_has_one_authoritative_implementation(self) -> None:
         implementations = []
         for path in (REPOSITORY_ROOT / 'python-src').rglob('*.py'):
