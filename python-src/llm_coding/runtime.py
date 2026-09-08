@@ -68,12 +68,13 @@ _REMOTE_FAILURE_PREFIX = 'LLM_CODING_REMOTE_FAILURE='
 _REMOTE_FAILURE_MESSAGES = {
     'missing_launcher': (
         'RunPod vLLM startup failed: the selected image has no prebuilt '
-        'llm-coding launcher. Set RUNPOD_IMAGE to a published compatible '
+        'llm-coding launcher. Set RUNPOD_IMAGE_REPOSITORY to the published '
         'runtime image, then retry llm-up.'
     ),
     'no_cuda': (
         'RunPod vLLM startup failed: the prebuilt runtime cannot access a '
-        'CUDA device. Verify the Pod GPU assignment and RUNPOD_IMAGE, then '
+        'CUDA device. Verify the Pod GPU assignment and selected runtime '
+        'image, then '
         'retry llm-up.'
     ),
     'vllm_exited': (
@@ -100,7 +101,7 @@ def _remote_startup_error(exc: subprocess.CalledProcessError) -> RuntimeError:
                     return RuntimeError(message)
     return RuntimeError(
         'RunPod vLLM startup command failed without a diagnostic code. '
-        'Verify RUNPOD_IMAGE is compatible, then retry llm-up.'
+        'Verify the selected runtime image is compatible, then retry llm-up.'
     )
 
 

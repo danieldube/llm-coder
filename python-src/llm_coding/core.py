@@ -61,6 +61,7 @@ class LegacySettingsAdapter:
                 normalized['MODEL'] = selected
         if selected in MODEL_SPECS:
             for key in (
+                'RUNPOD_IMAGE',
                 'RUNPOD_GPU_TYPE',
                 'MODEL_ID',
                 'MODEL_REVISION',
@@ -70,6 +71,8 @@ class LegacySettingsAdapter:
                 'MAX_OUTPUT_TOKENS',
                 'VLLM_GPU_MEMORY_UTILIZATION',
                 'VLLM_TOOL_CALL_PARSER',
+                'VLLM_VERSION',
+                'VLLM_CUDA_VERSION',
             ):
                 normalized.pop(key, None)
         empty_file = Path('/dev/null')

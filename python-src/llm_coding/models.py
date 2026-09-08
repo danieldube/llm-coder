@@ -8,6 +8,9 @@ class ModelSpec:
     """All model-owned settings, including its RunPod hardware contract."""
 
     key: str
+    runtime_image_tag: str
+    vllm_version: str
+    vllm_cuda_version: str
     model_id: str
     model_revision: str
     served_model_name: str
@@ -24,6 +27,9 @@ class ModelSpec:
 MODEL_SPECS: dict[str, ModelSpec] = {
     'qwen3-coder-30b-a3b-fp8': ModelSpec(
         key='qwen3-coder-30b-a3b-fp8',
+        runtime_image_tag='latest',
+        vllm_version='0.28.0',
+        vllm_cuda_version='129',
         model_id='Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
         model_revision='e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
         served_model_name='qwen3-coder',
@@ -38,6 +44,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     ),
     'qwen3-coder-next-fp8': ModelSpec(
         key='qwen3-coder-next-fp8',
+        runtime_image_tag='latest',
+        vllm_version='0.28.0',
+        vllm_cuda_version='129',
         model_id='Qwen/Qwen3-Coder-Next-FP8',
         model_revision='da6e2ed27304dd39abadd9c82ef50e8de67bdd4c',
         served_model_name='qwen3-coder-next',

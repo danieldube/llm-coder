@@ -219,15 +219,15 @@ Use trusted repositories and read [SECURITY.md](../SECURITY.md).
 
 `.github/workflows/publish-runtime-image.yml` publishes `linux/amd64` to
 `ghcr.io/<owner>/<repository>-runtime` when `docker/**`, `.dockerignore`, or the
-publishing workflow changes on `main`, or on manual dispatch. Its default tag
-is `sha-<first-12-commit-characters>`; dispatch can supply another tag. The
-workflow publishes provenance using `GITHUB_TOKEN`.
+model catalog changes on `main`, or on manual dispatch. It publishes both a
+`sha-<first-12-commit-characters>` traceability tag and `latest`. The controller
+selects `latest` for every model profile. The workflow publishes provenance
+using `GITHUB_TOKEN`.
 
-A SHA-derived tag is a naming convention, not enforced immutability: rebuilding
-the same tag can replace it. Use the published image digest for a fixed image
-reference. The base image is tag-pinned and Python/transitive dependencies are
-resolved at build time, so a commit alone does not guarantee identical bytes.
-Configuration does not enforce a tag or digest policy.
+`latest` is mutable: publishing a later image changes the bytes used for a
+subsequently created Pod. The base image is tag-pinned and Python/transitive
+dependencies are resolved at build time, so a commit alone does not guarantee
+identical bytes.
 
 For private GHCR images, store a read-only package token as a RunPod registry
 credential and set only its ID locally. The publishing repository determines

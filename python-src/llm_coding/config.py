@@ -29,6 +29,7 @@ class Settings:
     runpod_pod_name: str
     runpod_image: str
     runpod_gpu_type: str
+    runpod_image_repository: str = ''
     model: str = ''
     runpod_gpu_count: int = 1
     runpod_cloud_type: str = 'SECURE'
@@ -75,11 +76,9 @@ _REQUIRED = (
     'RUNPOD_API_KEY',
     'RUNPOD_SSH_KEY',
     'RUNPOD_POD_NAME',
-    'RUNPOD_IMAGE',
+    'RUNPOD_IMAGE_REPOSITORY',
     'MODEL',
     'OPENCODE_VERSION',
-    'VLLM_VERSION',
-    'VLLM_CUDA_VERSION',
 )
 _PLACEHOLDERS = {'REPLACE_ME', 'CHANGEME', 'YOUR_API_KEY', '<API_KEY>'}
 
@@ -134,13 +133,15 @@ def parse_settings(
     secret = raw.get('RUNPOD_API_KEY', '').strip()
     if secret.upper() in _PLACEHOLDERS:
         errors.append('RUNPOD_API_KEY contains a documented placeholder')
-    image = raw.get('RUNPOD_IMAGE', '').strip()
-    if 'REPLACE_WITH_' in image.upper():
-        errors.append('RUNPOD_IMAGE contains a documented placeholder')
-    if image.lower().startswith('runpod/pytorch:'):
+    image_repository = raw.get('RUNPOD_IMAGE_REPOSITORY', '').strip()
+    if 'REPLACE_WITH_' in image_repository.upper():
         errors.append(
-            'RUNPOD_IMAGE must reference an llm-coding runtime image, not a '
-            'runpod/pytorch base image'
+            'RUNPOD_IMAGE_REPOSITORY contains a documented placeholder'
+        )
+    if image_repository.lower().startswith('runpod/pytorch'):
+        errors.append(
+            'RUNPOD_IMAGE_REPOSITORY must reference an llm-coding runtime '
+            'image, not a runpod/pytorch base image'
         )
 
     def text(key: str, default: str = '') -> str:
@@ -190,6 +191,7 @@ def parse_settings(
         errors.append(str(exc))
         profile = None
     for key in (
+        'RUNPOD_IMAGE',
         'RUNPOD_GPU_TYPE',
         'MODEL_ID',
         'MODEL_REVISION',
@@ -199,6 +201,8 @@ def parse_settings(
         'MAX_OUTPUT_TOKENS',
         'VLLM_GPU_MEMORY_UTILIZATION',
         'VLLM_TOOL_CALL_PARSER',
+        'VLLM_VERSION',
+        'VLLM_CUDA_VERSION',
     ):
         if raw.get(key, '').strip():
             errors.append(f'{key} is selected internally by MODEL')
@@ -222,7 +226,12 @@ def parse_settings(
         runpod_api_key=secret,
         runpod_ssh_key=path('RUNPOD_SSH_KEY'),
         runpod_pod_name=text('RUNPOD_POD_NAME'),
-        runpod_image=text('RUNPOD_IMAGE'),
+        runpod_image=(
+            f'{image_repository}:{profile.runtime_image_tag}'
+            if profile
+            else ''
+        ),
+        runpod_image_repository=image_repository,
         runpod_gpu_type=profile.runpod_gpu_type if profile else '',
         model=profile_name,
         runpod_gpu_count=profile.runpod_gpu_count if profile else 1,
@@ -241,8 +250,8 @@ def parse_settings(
         runpod_min_vcpu_per_gpu=integer('RUNPOD_MIN_VCPU_PER_GPU', 8, 1, 1024),
         runpod_network_volume_id=text('RUNPOD_NETWORK_VOLUME_ID'),
         opencode_version=text('OPENCODE_VERSION'),
-        vllm_version=text('VLLM_VERSION'),
-        vllm_cuda_version=text('VLLM_CUDA_VERSION'),
+        vllm_version=profile.vllm_version if profile else '',
+        vllm_cuda_version=profile.vllm_cuda_version if profile else '',
         model_id=profile.model_id if profile else '',
         model_revision=profile.model_revision if profile else '',
         served_model_name=profile.served_model_name if profile else '',

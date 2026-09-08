@@ -43,24 +43,31 @@ The loader does not enforce permissions on existing files. See the
 ## Settings
 
 Required nonempty strings: `RUNPOD_API_KEY`, `RUNPOD_SSH_KEY`,
-`RUNPOD_POD_NAME`, `RUNPOD_IMAGE`, `MODEL`, `OPENCODE_VERSION`,
-`VLLM_VERSION`, and `VLLM_CUDA_VERSION`. API key placeholders `REPLACE_ME`, `CHANGEME`,
+`RUNPOD_POD_NAME`, `RUNPOD_IMAGE_REPOSITORY`, `MODEL`, and
+`OPENCODE_VERSION`. API key placeholders `REPLACE_ME`, `CHANGEME`,
 `YOUR_API_KEY`, and `<API_KEY>` are rejected case-insensitively. The documented
-`RUNPOD_IMAGE` placeholder and the `runpod/pytorch` base-image
+`RUNPOD_IMAGE_REPOSITORY` placeholder and the `runpod/pytorch` base-image
 family are rejected before a Pod is created. Other image references are not
 checked against a registry or inspected for the required launcher locally.
 
 `MODEL` selects a reviewed internal model contract. It owns the Hugging Face
-ID, served name, context/output limits, vLLM parser and memory
+ID, served name, context/output limits, vLLM/CUDA versions, parser and memory
 settings, GPU type/count, and tensor parallelism. Direct settings for those
 values are rejected to prevent a model from starting on incompatible hardware.
 The available keys are `qwen3-coder-30b-a3b-fp8` and
 `qwen3-coder-next-fp8`; the latter requests one `NVIDIA H200` (141 GB), uses a
 32K context, and starts vLLM with the `qwen3_coder` parser.
 
+`RUNPOD_IMAGE_REPOSITORY` supplies only the registry/repository prefix. The
+controller appends `:latest`, so a Pod uses the most recently published runtime
+image. This tag is mutable: a later image publication can replace it without a
+configuration change. The publishing workflow updates it whenever Docker inputs
+or the model catalog reach `main`.
+
 | Provider setting | Default | Contract |
 | --- | --- | --- |
 | `RUNPOD_CLOUD_TYPE` | `SECURE` | `SECURE` or `COMMUNITY` |
+| `RUNPOD_IMAGE_REPOSITORY` | Required | Runtime-image repository; the model selects its tag |
 | `RUNPOD_CONTAINER_REGISTRY_AUTH_ID` | Empty | RunPod registry credential ID, never a token |
 | `RUNPOD_CONTAINER_DISK_GB` | `40` | 1–2048 GiB |
 | `RUNPOD_VOLUME_GB` | `100` | 1–65536 GiB; used without a network volume |
@@ -81,11 +88,9 @@ SSH startup integration.
 | `LOCAL_PROXY_PORT` | `18000` | 1–65535; stable host endpoint |
 | `LOCAL_TUNNEL_PORT` | `18001` | 1–65535; must differ from proxy port |
 
-`VLLM_VERSION` and `VLLM_CUDA_VERSION` describe the prebuilt image. Changing
-them does not install or verify a different vLLM/CUDA build. The launcher
-always passes `--revision`, including when `MODEL_REVISION` is empty; empty
-revision behavior is not validated locally. GPU memory and model support are
-runtime constraints beyond these numeric ranges.
+The selected model profile pins the vLLM/CUDA versions and model revision that
+its runtime image contains. The launcher always passes that revision. GPU memory
+and model support are runtime constraints beyond these numeric ranges.
 
 | Lifecycle/integration setting | Default | Contract |
 | --- | --- | --- |

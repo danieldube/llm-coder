@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'docker/**'
+      - 'python-src/llm_coding/models.py'
       - '.dockerignore'
       - '.github/workflows/publish-runtime-image.yml'
   workflow_dispatch:
@@ -60,7 +61,9 @@ jobs:
           context: docker
           platforms: linux/amd64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
