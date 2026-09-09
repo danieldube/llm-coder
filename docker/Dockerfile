@@ -19,13 +19,13 @@ RUN case "${TARGETARCH:-amd64}" in \
         *) echo "Unsupported target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && "${VLLM_PYTHON}" -c \
-        "import torch; assert torch.__version__ == '2.13.0'" \
+        "import torch; assert torch.__version__.split('+', 1)[0] == '2.13.0'" \
     && uv pip install --system \
         "https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}%2Bcu${VLLM_CUDA_VERSION}-cp38-abi3-manylinux_2_28_${vllm_arch}.whl" \
         --extra-index-url "https://download.pytorch.org/whl/cu${VLLM_CUDA_VERSION}" \
         --index-strategy unsafe-best-match \
     && "${VLLM_PYTHON}" -c \
-        "import torch, vllm; assert torch.__version__ == '2.13.0'; assert vllm.__version__ == '${VLLM_VERSION}'"
+        "import torch, vllm; assert torch.__version__.split('+', 1)[0] == '2.13.0'; assert vllm.__version__ == '${VLLM_VERSION}'"
 
 COPY start-vllm.sh /opt/llm-coding/bin/start-vllm.sh
 RUN chmod 0755 /opt/llm-coding/bin/start-vllm.sh
