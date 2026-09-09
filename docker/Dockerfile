@@ -20,7 +20,7 @@ RUN case "${TARGETARCH:-amd64}" in \
     esac \
     && "${VLLM_PYTHON}" -c \
         "import torch; assert torch.__version__.split('+', 1)[0] == '2.13.0'" \
-    && uv pip install --system \
+    && uv pip install --system --break-system-packages \
         "https://github.com/vllm-project/vllm/releases/download/v${VLLM_VERSION}/vllm-${VLLM_VERSION}%2Bcu${VLLM_CUDA_VERSION}-cp38-abi3-manylinux_2_28_${vllm_arch}.whl" \
         --extra-index-url "https://download.pytorch.org/whl/cu${VLLM_CUDA_VERSION}" \
         --index-strategy unsafe-best-match \

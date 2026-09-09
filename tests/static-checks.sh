@@ -33,6 +33,7 @@ grep -F -- '--reasoning-parser' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- 'runpod/pytorch:1.2.0-rc.162-cu1290-torch2130-ubuntu2404@sha256:8fb86016fe9b1a16dbe767318ccda9348b2fd161ba538dcc753180e831b93585' \
     "${ROOT}/docker/Dockerfile" >/dev/null
 grep -F -- 'uv pip install --system' "${ROOT}/docker/Dockerfile" >/dev/null
+grep -F -- '--break-system-packages' "${ROOT}/docker/Dockerfile" >/dev/null
 if grep -F -- 'uv venv' "${ROOT}/docker/Dockerfile"; then
     echo 'Runtime image must use the compatible RunPod PyTorch environment.' >&2
     exit 1
