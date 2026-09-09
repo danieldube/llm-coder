@@ -50,8 +50,13 @@ class Settings:
     context_size: int = 65536
     max_output_tokens: int = 16384
     vllm_gpu_memory_utilization: float = 0.92
-    vllm_tool_call_parser: str = 'qwen3_xml'
     vllm_tensor_parallel_size: int = 1
+    vllm_kv_cache_dtype: str = 'auto'
+    vllm_enforce_eager: bool = False
+    vllm_language_model_only: bool = False
+    vllm_max_num_seqs: int = 256
+    vllm_reasoning_parser: str = ''
+    vllm_tool_call_parser: str = 'qwen3_xml'
     remote_vllm_port: int = 8000
     local_proxy_port: int = 18000
     local_tunnel_port: int = 18001
@@ -200,6 +205,12 @@ def parse_settings(
         'CONTEXT_SIZE',
         'MAX_OUTPUT_TOKENS',
         'VLLM_GPU_MEMORY_UTILIZATION',
+        'VLLM_TENSOR_PARALLEL_SIZE',
+        'VLLM_KV_CACHE_DTYPE',
+        'VLLM_ENFORCE_EAGER',
+        'VLLM_LANGUAGE_MODEL_ONLY',
+        'VLLM_MAX_NUM_SEQS',
+        'VLLM_REASONING_PARSER',
         'VLLM_TOOL_CALL_PARSER',
         'VLLM_VERSION',
         'VLLM_CUDA_VERSION',
@@ -261,6 +272,13 @@ def parse_settings(
         vllm_gpu_memory_utilization=(
             profile.gpu_memory_utilization if profile else utilization
         ),
+        vllm_kv_cache_dtype=profile.kv_cache_dtype if profile else 'auto',
+        vllm_enforce_eager=profile.enforce_eager if profile else False,
+        vllm_language_model_only=(
+            profile.language_model_only if profile else False
+        ),
+        vllm_max_num_seqs=profile.max_num_seqs if profile else 256,
+        vllm_reasoning_parser=profile.reasoning_parser if profile else '',
         vllm_tool_call_parser=(
             profile.tool_call_parser if profile else 'qwen3_xml'
         ),

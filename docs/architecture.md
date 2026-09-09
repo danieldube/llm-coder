@@ -99,23 +99,25 @@ Future installation or activation can recreate the integration.
 
 ## Remote runtime and storage
 
-The image contains Python 3.11 and the vLLM environment at
-`/opt/llm-coding/vllm`. It retains the RunPod base image's SSH startup command.
+The image retains the RunPod PyTorch base image's SSH startup command and uses
+its Python environment. The selected base supplies `torch==2.13.0`, matching
+the pinned vLLM wheel, so the image does not contain a second PyTorch runtime.
 The controller sends the packaged `remote/ensure-vllm.sh` over SSH; this script
 runs `/opt/llm-coding/bin/start-vllm.sh`, rather than installing dependencies.
 
 `/workspace/llm-coding/` contains the Hugging Face cache (`huggingface/`),
 `vllm.pid`, `vllm.log`, and `runtime.signature`. The script reuses a healthy
 server only when its configuration signature matches; otherwise it stops the
-recorded vLLM process and launches the image's executable. Version settings
-participate in that signature but do not verify or replace installed binaries.
-The launcher enables prefix caching, request logging, and automatic tool choice.
+recorded vLLM process and launches the image's executable. Version and vLLM
+launch settings participate in that signature but do not verify or replace
+installed binaries. The launcher enables prefix caching, request logging, and
+automatic tool choice.
 
 Keep `RUNPOD_VOLUME_MOUNT_PATH=/workspace`: the script's storage path is fixed.
 The default Pod volume survives stops but is tied to the Pod. An optional
 network volume is independently managed. The controller never deletes Pods
-or volumes. In particular, the vLLM virtual environment is in the image, not
-on the persistent volume.
+or volumes. In particular, vLLM and its dependencies are in the image, not on
+the persistent volume.
 
 ## Local state and integration
 

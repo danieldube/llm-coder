@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -169,14 +170,39 @@ class FocusedModuleTests(unittest.TestCase):
             runtime._asset_text('remote', 'ensure-vllm.sh'),
         )
 
-    def test_remote_launcher_includes_tensor_parallel_size(self) -> None:
-        remote = runtime._asset_text('remote', 'ensure-vllm.sh')
-        launcher = (
-            Path(__file__).parents[2] / 'docker' / 'start-vllm.sh'
-        ).read_text()
-        self.assertIn('TENSOR_PARALLEL_SIZE="$9"', remote)
-        self.assertIn(
-            '--tensor-parallel-size "${TENSOR_PARALLEL_SIZE}"', launcher
+    def test_remote_vllm_arguments_include_launch_configuration(self) -> None:
+        config = replace(
+            settings(Path('/keys')),
+            context_size=32768,
+            vllm_tensor_parallel_size=1,
+            vllm_kv_cache_dtype='fp8',
+            vllm_enforce_eager=True,
+            vllm_language_model_only=True,
+            vllm_max_num_seqs=8,
+            vllm_reasoning_parser='qwen3',
+            vllm_tool_call_parser='qwen3_coder',
+        )
+
+        self.assertEqual(
+            runtime._remote_vllm_arguments(config),
+            (
+                '0.28.0',
+                '129',
+                'Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
+                'e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
+                'qwen3-coder',
+                '32768',
+                '0.92',
+                '1',
+                'fp8',
+                'true',
+                'true',
+                '8',
+                'qwen3',
+                'qwen3_coder',
+                '8000',
+                '1800',
+            ),
         )
 
     def test_create_pod_explains_only_known_capacity_failures(self) -> None:

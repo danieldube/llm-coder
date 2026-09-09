@@ -42,8 +42,9 @@ Edit `config.env` and `secrets.env` in that directory:
   [runtime image releases](docs/architecture.md#runtime-image-releases).
 - For a private image, set `RUNPOD_CONTAINER_REGISTRY_AUTH_ID` to a RunPod
   registry credential ID. Keep the registry token in RunPod.
-- Review GPU, model, storage, and timeout settings in
-  [configuration](docs/configuration.md). Keep the volume mounted at `/workspace`.
+- Select a reviewed `MODEL`, then review its GPU, storage, and timeout settings
+  in [configuration](docs/configuration.md). Keep the volume mounted at
+  `/workspace`.
 
 ```bash
 llm-install

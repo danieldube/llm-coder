@@ -329,6 +329,28 @@ def _forget_endpoint_after_confirmed_replacement(
         forget_endpoint_for_deleted_pod(state.directory, previous_id, run)
 
 
+def _remote_vllm_arguments(config: Settings) -> tuple[str, ...]:
+    """Serialize validated settings for the packaged remote launcher."""
+    return (
+        config.vllm_version,
+        config.vllm_cuda_version,
+        config.model_id,
+        config.model_revision,
+        config.served_model_name,
+        str(config.context_size),
+        str(config.vllm_gpu_memory_utilization),
+        str(config.vllm_tensor_parallel_size),
+        config.vllm_kv_cache_dtype,
+        str(config.vllm_enforce_eager).lower(),
+        str(config.vllm_language_model_only).lower(),
+        str(config.vllm_max_num_seqs),
+        config.vllm_reasoning_parser,
+        config.vllm_tool_call_parser,
+        str(config.remote_vllm_port),
+        str(config.vllm_start_timeout_seconds),
+    )
+
+
 def up(
     dependencies: RuntimeDependencies | None = None,
     provider: PodProvider | None = None,
@@ -446,17 +468,7 @@ def up(
                     'bash',
                     '-s',
                     '--',
-                    config.vllm_version,
-                    config.vllm_cuda_version,
-                    config.model_id,
-                    config.model_revision,
-                    config.served_model_name,
-                    str(config.context_size),
-                    str(config.vllm_gpu_memory_utilization),
-                    config.vllm_tool_call_parser,
-                    str(config.vllm_tensor_parallel_size),
-                    str(config.remote_vllm_port),
-                    str(config.vllm_start_timeout_seconds),
+                    *_remote_vllm_arguments(config),
                 ],
                 capture_output=True,
                 input=_asset_text('remote', 'ensure-vllm.sh'),

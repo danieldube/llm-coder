@@ -15,7 +15,7 @@ import click
 import requests
 
 from .command import run_command
-from .config import ConfigManager, Settings
+from .config import ConfigManager, ConfigurationError, Settings
 from .core import check_dependencies, fatal
 from .opencode import create_config as create_opencode_config
 from .opencode import launch as launch_opencode
@@ -237,17 +237,23 @@ def llm_up() -> None:
     """Activate the LLM runtime"""
     check_dependencies()
 
-    # Load configuration
     config_manager = ConfigManager()
-    config = config_manager.load_settings()
-
     if (
         not config_manager.config_file.is_file()
         or not config_manager.secrets_file.is_file()
     ):
-        fatal(f'Missing configuration files in {config_manager.config_dir}')
-
-    # Validate configuration
+        raise click.ClickException(
+            'Missing configuration files in '
+            f'{config_manager.config_dir}. Create config.env and secrets.env '
+            'from the packaged examples before running llm-up.'
+        )
+    try:
+        config = config_manager.load_settings()
+    except ConfigurationError as exc:
+        raise click.ClickException(
+            f'{exc}\nUpdate the files in {config_manager.config_dir} and '
+            'run llm-up again.'
+        ) from None
 
     try:
         ensure_socket(config)

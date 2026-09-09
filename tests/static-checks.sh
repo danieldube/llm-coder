@@ -24,6 +24,19 @@ jq -e '
 ' "${ROOT}/python-src/llm_coding/assets/config/opencode.base.json" >/dev/null
 
 grep -F -- '--enable-log-requests' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- '--tensor-parallel-size' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- '--kv-cache-dtype' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- '--max-num-seqs' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- '--enforce-eager' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- '--language-model-only' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- '--reasoning-parser' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- 'runpod/pytorch:1.2.0-rc.162-cu1290-torch2130-ubuntu2404@sha256:8fb86016fe9b1a16dbe767318ccda9348b2fd161ba538dcc753180e831b93585' \
+    "${ROOT}/docker/Dockerfile" >/dev/null
+grep -F -- 'uv pip install --system' "${ROOT}/docker/Dockerfile" >/dev/null
+if grep -F -- 'uv venv' "${ROOT}/docker/Dockerfile"; then
+    echo 'Runtime image must use the compatible RunPod PyTorch environment.' >&2
+    exit 1
+fi
 
 while IFS= read -r metadata; do
     if [[ -e "${ROOT}/${metadata}" ]]; then

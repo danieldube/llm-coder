@@ -103,6 +103,25 @@ class TestConfigValidation(unittest.TestCase):
         settings = self.parse()
         self.assertEqual(settings.vllm_gpu_memory_utilization, 0.90)
 
+    def test_qwen38_profile_resolves_launch_configuration(self) -> None:
+        settings = self.parse({'MODEL': 'qwen3.8-nvfp4'})
+        self.assertEqual(settings.model_id, 'Inferact/Qwen3.8-27B-NVFP4')
+        self.assertEqual(settings.runpod_gpu_type, 'NVIDIA GeForce RTX 5090')
+        self.assertEqual(settings.vllm_tensor_parallel_size, 1)
+        self.assertEqual(settings.vllm_kv_cache_dtype, 'fp8')
+        self.assertTrue(settings.vllm_enforce_eager)
+        self.assertTrue(settings.vllm_language_model_only)
+        self.assertEqual(settings.vllm_max_num_seqs, 8)
+        self.assertEqual(settings.vllm_reasoning_parser, 'qwen3')
+        self.assertEqual(settings.vllm_tool_call_parser, 'qwen3_coder')
+
+        for key, value in (
+            ('VLLM_TENSOR_PARALLEL_SIZE', '0'),
+            ('VLLM_MAX_NUM_SEQS', 'zero'),
+        ):
+            with self.subTest(key=key), self.assertRaises(ConfigurationError):
+                self.parse({key: value})
+
     def test_boundaries_relationships_and_defaults(self) -> None:
         settings = self.parse(
             {

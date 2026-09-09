@@ -16,8 +16,10 @@ are case-insensitive.
 Validation aggregates missing values, invalid types, and range errors without
 printing secret values. It does not check image availability, CUDA
 compatibility, file permissions, or credentials against RunPod. `llm-install`
-creates directories and attempts missing template copies before validation;
-other runtime operations load settings before their lifecycle side effects.
+creates directories before validation, but its current template copy call is
+invalid; use the bootstrap commands in the README when either configuration
+file is missing. Other runtime operations load settings before their lifecycle
+side effects.
 
 Use configuration files for durable settings. Generated units do not embed
 shell overrides or forward XDG variables: services read their user-systemd
@@ -51,12 +53,13 @@ family are rejected before a Pod is created. Other image references are not
 checked against a registry or inspected for the required launcher locally.
 
 `MODEL` selects a reviewed internal model contract. It owns the Hugging Face
-ID, served name, context/output limits, vLLM/CUDA versions, parser and memory
-settings, GPU type/count, and tensor parallelism. Direct settings for those
-values are rejected to prevent a model from starting on incompatible hardware.
-The available keys are `qwen3-coder-30b-a3b-fp8` and
-`qwen3-coder-next-fp8`; the latter requests one `NVIDIA H200` (141 GB), uses a
-32K context, and starts vLLM with the `qwen3_coder` parser.
+ID, served name, context/output limits, vLLM/CUDA versions, all vLLM launch
+flags, GPU type/count, and tensor parallelism. Direct settings for those values
+are rejected to prevent a model from starting on incompatible hardware.
+The available keys are `qwen3-coder-30b-a3b-fp8`,
+`qwen3-coder-next-fp8`, and `qwen3.8-nvfp4`. The latter requests one NVIDIA
+GeForce RTX 5090, uses a 32K context, and starts vLLM with FP8 KV cache,
+eager mode, language-model-only mode, and the `qwen3` reasoning parser.
 
 `RUNPOD_IMAGE_REPOSITORY` supplies only the registry/repository prefix. The
 controller appends `:latest`, so a Pod uses the most recently published runtime

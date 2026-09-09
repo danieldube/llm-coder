@@ -8,10 +8,15 @@ MODEL_REVISION="$4"
 SERVED_MODEL_NAME="$5"
 CONTEXT_SIZE="$6"
 GPU_MEMORY_UTILIZATION="$7"
-TOOL_CALL_PARSER="$8"
-TENSOR_PARALLEL_SIZE="$9"
-PORT="${10}"
-START_TIMEOUT="${11}"
+TENSOR_PARALLEL_SIZE="$8"
+KV_CACHE_DTYPE="$9"
+ENFORCE_EAGER="${10}"
+LANGUAGE_MODEL_ONLY="${11}"
+MAX_NUM_SEQS="${12}"
+REASONING_PARSER="${13}"
+TOOL_CALL_PARSER="${14}"
+PORT="${15}"
+START_TIMEOUT="${16}"
 
 RUNTIME_ROOT=/workspace/llm-coding
 HF_HOME="${RUNTIME_ROOT}/huggingface"
@@ -32,7 +37,7 @@ if [[ ! -x "${LAUNCHER}" ]]; then
     fail missing_launcher
 fi
 
-if ! /opt/llm-coding/vllm/bin/python - <<'PY'
+if ! /usr/local/bin/python - <<'PY'
 import torch
 
 if not torch.cuda.is_available():
@@ -50,8 +55,13 @@ signature="$(printf '%s\n' \
     "${SERVED_MODEL_NAME}" \
     "${CONTEXT_SIZE}" \
     "${GPU_MEMORY_UTILIZATION}" \
-    "${TOOL_CALL_PARSER}" \
     "${TENSOR_PARALLEL_SIZE}" \
+    "${KV_CACHE_DTYPE}" \
+    "${ENFORCE_EAGER}" \
+    "${LANGUAGE_MODEL_ONLY}" \
+    "${MAX_NUM_SEQS}" \
+    "${REASONING_PARSER}" \
+    "${TOOL_CALL_PARSER}" \
     'log-requests' \
     | sha256sum | awk '{print $1}')"
 
@@ -91,8 +101,13 @@ nohup "${LAUNCHER}" \
     "${SERVED_MODEL_NAME}" \
     "${CONTEXT_SIZE}" \
     "${GPU_MEMORY_UTILIZATION}" \
-    "${TOOL_CALL_PARSER}" \
     "${TENSOR_PARALLEL_SIZE}" \
+    "${KV_CACHE_DTYPE}" \
+    "${ENFORCE_EAGER}" \
+    "${LANGUAGE_MODEL_ONLY}" \
+    "${MAX_NUM_SEQS}" \
+    "${REASONING_PARSER}" \
+    "${TOOL_CALL_PARSER}" \
     "${PORT}" \
     "${LOG_FILE}" \
     > /dev/null 2>&1 < /dev/null &
