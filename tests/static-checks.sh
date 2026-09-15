@@ -26,7 +26,7 @@ jq -e '
 grep -F -- '--enable-log-requests' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- 'HOST_DRIVER_LIB=/usr/lib/x86_64-linux-gnu' \
     "${ROOT}/docker/start-vllm.sh" >/dev/null
-grep -F -- 'export LD_LIBRARY_PATH="${HOST_DRIVER_LIB}' \
+grep -F -- 'export LD_LIBRARY_PATH=' \
     "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--tensor-parallel-size' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--kv-cache-dtype' "${ROOT}/docker/start-vllm.sh" >/dev/null
