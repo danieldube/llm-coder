@@ -12,12 +12,28 @@ ENV VLLM_PYTHON=/usr/local/bin/python
 # vLLM 0.28.0 publishes CUDA 12.9 and 13.0 wheels only. Build the reviewed
 # release revision against the base image's CUDA 12.8 PyTorch installation;
 # dependencies remain in the image and are never installed on a live Pod.
+# --no-build-isolation requires vLLM's declared backend dependencies to already
+# exist in the image. Keep these bounds synchronized with the pinned source
+# revision's pyproject.toml. The source build also compiles vLLM's Rust
+# extensions, so install Cargo in the build image.
 RUN case "${TARGETARCH:-amd64}" in \
         amd64) ;; \
         *) echo "CUDA 12.8 runtime supports only linux/amd64" >&2; exit 1 ;; \
     esac \
     && "${VLLM_PYTHON}" -c \
         "import torch; assert torch.__version__.split('+', 1)[0] == '2.13.0'" \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cargo \
+    && rm -rf /var/lib/apt/lists/* \
+    && uv pip install --system --break-system-packages \
+        'cmake>=3.26.1' \
+        ninja \
+        'packaging>=24.2' \
+        'setuptools>=77.0.3,<81.0.0' \
+        'setuptools-scm>=8.0' \
+        'setuptools-rust>=1.9.0' \
+        wheel \
+        jinja2 \
     && uv pip install --system --break-system-packages --no-build-isolation \
         "git+https://github.com/vllm-project/vllm.git@${VLLM_SOURCE_REVISION}" \
     && "${VLLM_PYTHON}" -c \

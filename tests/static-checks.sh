@@ -40,6 +40,10 @@ grep -F -- 'runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'VLLM_SOURCE_REVISION=2cf0a69' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
+grep -F -- "'setuptools-rust>=1.9.0'" \
+    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
+grep -F -- 'apt-get install -y --no-install-recommends cargo' \
+    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'matrix.variant' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
 grep -F -- 'uv pip install --system' "${ROOT}/docker/Dockerfile" >/dev/null
