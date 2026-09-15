@@ -56,11 +56,14 @@ grep -F -- "'setuptools-rust>=1.9.0'" \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'apt-get install -y --no-install-recommends cargo' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
-# shellcheck disable=SC2016 # The GitHub Actions expression is literal text.
-grep -F -- 'candidate=${{ matrix.variant }}-${tag}' \
+grep -F -- 'candidate=cuda129-${tag}' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
 grep -F -- 'Promote validated candidate to stable alias' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
+grep -F -- 'file: docker/Dockerfile.cuda128' \
+    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
+grep -F -- 'cancel-in-progress: false' \
+    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
 for forbidden in \
     'pip install vllm' 'uv pip install vllm' 'git clone vllm' cmake ninja cargo \
     'pip install torch' 'uv pip install torch'; do

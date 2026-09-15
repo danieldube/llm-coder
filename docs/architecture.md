@@ -220,12 +220,13 @@ Use trusted repositories and read [SECURITY.md](../SECURITY.md).
 
 ## Runtime image releases
 
-`.github/workflows/publish-runtime-image.yml` publishes CUDA 12.8 and CUDA 12.9
-`linux/amd64` variants to `ghcr.io/<owner>/<repository>-runtime`. A push builds
-CUDA 12.8 only when its Dockerfile, launcher, or build context changes; CUDA
-12.9 has its own input set. A manual dispatch builds both variants. This keeps
-the slow CUDA 12.8 source build from being cancelled by unrelated CUDA 12.9
-work. Each variant first gets a `cuda<version>-sha-<commit>` candidate tag.
+`.github/workflows/publish-cuda128-runtime-image.yml` and
+`.github/workflows/publish-runtime-image.yml` publish the CUDA 12.8 and CUDA
+12.9 `linux/amd64` variants, respectively, to
+`ghcr.io/<owner>/<repository>-runtime`. Each workflow runs only for its own
+Docker inputs or a manual dispatch. This keeps the slow CUDA 12.8 source build
+independent of CUDA 12.9 work. Each variant first gets a
+`cuda<version>-sha-<commit>` candidate tag.
 The CUDA 12.9 candidate is checked for its official vLLM software contract and
 local SSH startup before its mutable `cuda129` alias is promoted. A failed
 candidate therefore leaves the preceding CUDA 12.9 alias intact. Current model

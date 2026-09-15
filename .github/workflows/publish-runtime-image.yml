@@ -5,8 +5,11 @@ on:
     branches:
       - main
     paths:
-      - 'docker/**'
-      - 'python-src/llm_coding/models.py'
+      - 'docker/Dockerfile.cuda129'
+      - 'docker/container-start.sh'
+      - 'docker/start-vllm.cuda129.sh'
+      - 'docker/validate-runtime'
+      - 'docker/vllm-python'
       - '.dockerignore'
       - '.github/workflows/publish-runtime-image.yml'
   workflow_dispatch:
@@ -27,51 +30,8 @@ env:
   IMAGE_NAME: ${{ github.repository }}-runtime
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            cuda128:
-              - 'docker/Dockerfile.cuda128'
-              - 'docker/start-vllm.sh'
-              - '.dockerignore'
-            cuda129:
-              - 'docker/Dockerfile.cuda129'
-              - 'docker/container-start.sh'
-              - 'docker/start-vllm.cuda129.sh'
-              - 'docker/validate-runtime'
-              - 'docker/vllm-python'
-              - '.dockerignore'
-              - '.github/workflows/publish-runtime-image.yml'
-      - id: matrix
-        env:
-          CUDA128_CHANGED: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.cuda128 == 'true' }}
-          CUDA129_CHANGED: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.cuda129 == 'true' }}
-        run: |
-          variants=()
-          if [[ "$CUDA128_CHANGED" == 'true' ]]; then
-            variants+=('{"variant":"cuda128","dockerfile":"docker/Dockerfile.cuda128"}')
-          fi
-          if [[ "$CUDA129_CHANGED" == 'true' ]]; then
-            variants+=('{"variant":"cuda129","dockerfile":"docker/Dockerfile.cuda129"}')
-          fi
-          IFS=,
-          echo "matrix=[${variants[*]}]" >> "$GITHUB_OUTPUT"
-
   publish:
-    needs: changes
-    if: needs.changes.outputs.matrix != '[]'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +47,7 @@ jobs:
               exit 1
               ;;
           esac
-          echo "candidate=${{ matrix.variant }}-${tag}" >> "$GITHUB_OUTPUT"
+          echo "candidate=cuda129-${tag}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -98,7 +58,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Inspect official CUDA 12.9 base
-        if: matrix.variant == 'cuda129'
         run: |
           docker buildx imagetools inspect \
             vllm/vllm-openai:v0.28.0-cu129-ubuntu2404
@@ -108,7 +67,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: docker/Dockerfile.cuda129
           platforms: linux/amd64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
@@ -118,7 +77,6 @@ jobs:
             org.opencontainers.image.version=${{ steps.image.outputs.candidate }}
 
       - name: Validate candidate software contract
-        if: matrix.variant == 'cuda129'
         env:
           CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
         run: |
@@ -126,7 +84,6 @@ jobs:
           docker run --rm --entrypoint /usr/local/bin/validate-runtime "$CANDIDATE"
 
       - name: Validate candidate SSH startup
-        if: matrix.variant == 'cuda129'
         env:
           CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
         run: |
@@ -170,7 +127,7 @@ jobs:
       - name: Promote validated candidate to stable alias
         env:
           CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
-          STABLE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }}
+          STABLE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cuda129
         run: docker buildx imagetools create --tag "$STABLE" "$CANDIDATE"
 
       - name: Attest candidate provenance

@@ -1,0 +1,86 @@
+name: Publish CUDA 12.8 runtime image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docker/Dockerfile.cuda128'
+      - 'docker/start-vllm.sh'
+      - '.dockerignore'
+      - '.github/workflows/publish-cuda128-runtime-image.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional immutable image tag suffix (defaults to commit SHA)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+concurrency:
+  group: publish-cuda128-runtime-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-runtime
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select immutable candidate tag
+        id: image
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${INPUT_TAG:-sha-${GITHUB_SHA::12}}"
+          case "$tag" in
+            ''|*[^0-9A-Za-z._-]*)
+              echo 'Image tag must contain only letters, numbers, ., _, or -.' >&2
+              exit 1
+              ;;
+          esac
+          echo "candidate=cuda128-${tag}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable candidate
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda128
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.image.outputs.candidate }}
+
+      - name: Promote candidate to stable alias
+        env:
+          CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
+          STABLE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cuda128
+        run: docker buildx imagetools create --tag "$STABLE" "$CANDIDATE"
+
+      - name: Attest candidate provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
