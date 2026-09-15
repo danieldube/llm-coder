@@ -32,9 +32,9 @@ class ModelSpec:
 MODEL_SPECS: dict[str, ModelSpec] = {
     'qwen3-coder-30b-a3b-fp8': ModelSpec(
         key='qwen3-coder-30b-a3b-fp8',
-        runtime_image_tag='latest',
+        runtime_image_tag='cuda128',
         vllm_version='0.28.0',
-        vllm_cuda_version='129',
+        vllm_cuda_version='128',
         model_id='Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
         model_revision='e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
         served_model_name='qwen3-coder',
@@ -54,9 +54,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     ),
     'qwen3-coder-next-fp8': ModelSpec(
         key='qwen3-coder-next-fp8',
-        runtime_image_tag='latest',
+        runtime_image_tag='cuda128',
         vllm_version='0.28.0',
-        vllm_cuda_version='129',
+        vllm_cuda_version='128',
         model_id='Qwen/Qwen3-Coder-Next-FP8',
         model_revision='da6e2ed27304dd39abadd9c82ef50e8de67bdd4c',
         served_model_name='qwen3-coder-next',
@@ -76,9 +76,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     ),
     'qwen3.8-nvfp4': ModelSpec(
         key='qwen3.8-nvfp4',
-        runtime_image_tag='latest',
+        runtime_image_tag='cuda128',
         vllm_version='0.28.0',
-        vllm_cuda_version='129',
+        vllm_cuda_version='128',
         model_id='Inferact/Qwen3.8-27B-NVFP4',
         model_revision='cb12525975f2527d9fefbe7b13de65546db30f9a',
         served_model_name='qwen38-coder',

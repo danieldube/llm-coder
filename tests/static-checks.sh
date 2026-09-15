@@ -36,6 +36,12 @@ grep -F -- '--language-model-only' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--reasoning-parser' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- 'runpod/pytorch:1.2.0-rc.162-cu1290-torch2130-ubuntu2404@sha256:8fb86016fe9b1a16dbe767318ccda9348b2fd161ba538dcc753180e831b93585' \
     "${ROOT}/docker/Dockerfile" >/dev/null
+grep -F -- 'runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3' \
+    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
+grep -F -- 'VLLM_SOURCE_REVISION=2cf0a69' \
+    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
+grep -F -- 'matrix.variant' \
+    "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
 grep -F -- 'uv pip install --system' "${ROOT}/docker/Dockerfile" >/dev/null
 grep -F -- '--break-system-packages' "${ROOT}/docker/Dockerfile" >/dev/null
 if grep -F -- 'uv venv' "${ROOT}/docker/Dockerfile"; then

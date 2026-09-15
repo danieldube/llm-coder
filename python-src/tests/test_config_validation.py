@@ -152,10 +152,10 @@ class TestConfigValidation(unittest.TestCase):
         self.assertEqual(settings.context_size, 32768)
         self.assertEqual(settings.vllm_tool_call_parser, 'qwen3_coder')
         self.assertEqual(settings.vllm_version, '0.28.0')
-        self.assertEqual(settings.vllm_cuda_version, '129')
+        self.assertEqual(settings.vllm_cuda_version, '128')
         self.assertEqual(
             settings.runpod_image,
-            'example.invalid/runtime:latest',
+            'example.invalid/runtime:cuda128',
         )
         body = pod_create_body(settings, 'ssh-ed25519 public')
         self.assertEqual(body['gpuTypeIds'], ['NVIDIA H200'])
@@ -188,7 +188,7 @@ class TestConfigValidation(unittest.TestCase):
         )
         self.assertEqual(
             settings.runpod_image,
-            'ghcr.io/danieldube/llm-coder-runtime:latest',
+            'ghcr.io/danieldube/llm-coder-runtime:cuda128',
         )
 
 

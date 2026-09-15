@@ -29,6 +29,14 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cuda128
+            dockerfile: docker/Dockerfile.cuda128
+          - variant: cuda129
+            dockerfile: docker/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -59,15 +67,16 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }}-${{ steps.image.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.image.outputs.tag }}
+            org.opencontainers.image.version=${{ matrix.variant }}-${{ steps.image.outputs.tag }}
 
       - name: Attest image provenance
         uses: actions/attest-build-provenance@v2

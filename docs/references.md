@@ -36,9 +36,9 @@ rebuild the GPU image, rehash release binaries, or run live inference.
 ## Inference pins
 
 - [vLLM v0.28.0 release](https://github.com/vllm-project/vllm/releases/tag/v0.28.0)
-  and [PyPI metadata](https://pypi.org/project/vllm/0.28.0/). The Dockerfile
-  downloads the CUDA 12.9 wheel from the GitHub release into the compatible
-  RunPod PyTorch environment.
+  and [PyPI metadata](https://pypi.org/project/vllm/0.28.0/). The CUDA 12.9
+  image downloads the release wheel; the CUDA 12.8 image builds the reviewed
+  release revision because no CUDA 12.8 wheel is published for this release.
 - [vLLM tool calling](https://docs.vllm.ai/en/latest/features/tool_calling/):
   documents the `qwen3_xml` parser for Qwen3-Coder.
 - [Qwen3-Coder-30B-A3B-Instruct-FP8](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8)

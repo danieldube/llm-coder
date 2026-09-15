@@ -62,10 +62,11 @@ GeForce RTX 5090, uses a 32K context, and starts vLLM with FP8 KV cache,
 eager mode, language-model-only mode, and the `qwen3` reasoning parser.
 
 `RUNPOD_IMAGE_REPOSITORY` supplies only the registry/repository prefix. The
-controller appends `:latest`, so a Pod uses the most recently published runtime
-image. This tag is mutable: a later image publication can replace it without a
-configuration change. The publishing workflow updates it whenever Docker inputs
-or the model catalog reach `main`.
+selected `MODEL` appends its reviewed runtime variant. All current profiles use
+the CUDA 12.8 `:cuda128` compatibility baseline, which supports Blackwell GPUs
+and 570-series RunPod drivers. The repository also publishes `:cuda129` for
+reviewed profiles that require it. Variant aliases are mutable; the controller
+replaces a selected Pod when the reviewed model contract changes.
 
 | Provider setting | Default | Contract |
 | --- | --- | --- |
@@ -93,7 +94,9 @@ SSH startup integration.
 
 The selected model profile pins the vLLM/CUDA versions and model revision that
 its runtime image contains. The launcher always passes that revision. GPU memory
-and model support are runtime constraints beyond these numeric ranges.
+and model support are runtime constraints beyond these numeric ranges. CUDA 12.8
+is built from the reviewed vLLM source revision because vLLM 0.28.0 does not
+publish a CUDA 12.8 wheel.
 
 The runtime image gives RunPod's mounted host NVIDIA driver precedence over the
 base image's CUDA forward-compatibility `libcuda` shim. This supports hosts

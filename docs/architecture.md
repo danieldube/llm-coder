@@ -219,17 +219,18 @@ Use trusted repositories and read [SECURITY.md](../SECURITY.md).
 
 ## Runtime image releases
 
-`.github/workflows/publish-runtime-image.yml` publishes `linux/amd64` to
-`ghcr.io/<owner>/<repository>-runtime` when `docker/**`, `.dockerignore`, or the
-model catalog changes on `main`, or on manual dispatch. It publishes both a
-`sha-<first-12-commit-characters>` traceability tag and `latest`. The controller
-selects `latest` for every model profile. The workflow publishes provenance
-using `GITHUB_TOKEN`.
+`.github/workflows/publish-runtime-image.yml` publishes CUDA 12.8 and CUDA 12.9
+`linux/amd64` variants to `ghcr.io/<owner>/<repository>-runtime` when Docker
+inputs, the model catalog, or the workflow change on `main`, or on manual
+dispatch. Each variant gets a `cuda<version>-sha-<commit>` traceability tag and
+a mutable `cuda<version>` alias. Current model profiles select `cuda128`, the
+compatibility baseline for Blackwell GPUs and 570-series drivers. The workflow
+publishes provenance using `GITHUB_TOKEN`.
 
-`latest` is mutable: publishing a later image changes the bytes used for a
-subsequently created Pod. The base image is tag-pinned and Python/transitive
-dependencies are resolved at build time, so a commit alone does not guarantee
-identical bytes.
+Variant aliases are mutable. A model-contract change changes the persisted Pod
+specification fingerprint and causes the controller to replace its selected Pod.
+The base image is digest-pinned; the CUDA 12.8 source build is pinned to the
+reviewed vLLM release revision.
 
 For private GHCR images, store a read-only package token as a RunPod registry
 credential and set only its ID locally. The publishing repository determines
