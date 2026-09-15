@@ -27,16 +27,51 @@ env:
   IMAGE_NAME: ${{ github.repository }}-runtime
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            cuda128:
+              - 'docker/Dockerfile.cuda128'
+              - 'docker/start-vllm.sh'
+              - '.dockerignore'
+            cuda129:
+              - 'docker/Dockerfile.cuda129'
+              - 'docker/container-start.sh'
+              - 'docker/start-vllm.cuda129.sh'
+              - 'docker/validate-runtime'
+              - 'docker/vllm-python'
+              - '.dockerignore'
+              - '.github/workflows/publish-runtime-image.yml'
+      - id: matrix
+        env:
+          CUDA128_CHANGED: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.cuda128 == 'true' }}
+          CUDA129_CHANGED: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.cuda129 == 'true' }}
+        run: |
+          variants=()
+          if [[ "$CUDA128_CHANGED" == 'true' ]]; then
+            variants+=('{"variant":"cuda128","dockerfile":"docker/Dockerfile.cuda128"}')
+          fi
+          if [[ "$CUDA129_CHANGED" == 'true' ]]; then
+            variants+=('{"variant":"cuda129","dockerfile":"docker/Dockerfile.cuda129"}')
+          fi
+          IFS=,
+          echo "matrix=[${variants[*]}]" >> "$GITHUB_OUTPUT"
+
   publish:
+    needs: changes
+    if: needs.changes.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - variant: cuda128
-            dockerfile: docker/Dockerfile.cuda128
-          - variant: cuda129
-            dockerfile: docker/Dockerfile.cuda129
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
