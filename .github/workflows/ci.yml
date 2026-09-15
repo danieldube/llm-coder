@@ -116,6 +116,7 @@ jobs:
       - name: Build runtime image without pushing
         uses: docker/build-push-action@v6
         with:
-          context: docker
+          context: .
+          file: docker/Dockerfile.cuda129
           push: false
           tags: llm-coding-runtime:ci
