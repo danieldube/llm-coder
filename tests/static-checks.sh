@@ -56,6 +56,7 @@ grep -F -- "'setuptools-rust>=1.9.0'" \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'apt-get install -y --no-install-recommends cargo' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
+# shellcheck disable=SC2016 # The Docker tag template is literal workflow text.
 grep -F -- 'candidate=cuda129-${tag}' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
 grep -F -- 'Promote validated candidate to stable alias' \
