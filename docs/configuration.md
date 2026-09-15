@@ -95,6 +95,12 @@ The selected model profile pins the vLLM/CUDA versions and model revision that
 its runtime image contains. The launcher always passes that revision. GPU memory
 and model support are runtime constraints beyond these numeric ranges.
 
+The runtime image gives RunPod's mounted host NVIDIA driver precedence over the
+base image's CUDA forward-compatibility `libcuda` shim. This supports hosts
+whose driver is older than the image's CUDA toolkit, including RTX 5090 Pods
+with a 570-series driver. It does not make an unsupported GPU architecture or
+driver API available.
+
 | Lifecycle/integration setting | Default | Contract |
 | --- | --- | --- |
 | `IDLE_SHUTDOWN` | `30min` | Positive integer followed by `us`, `ms`, `s`, `min`, `h`, `d`, or `w` |

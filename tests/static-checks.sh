@@ -24,6 +24,10 @@ jq -e '
 ' "${ROOT}/python-src/llm_coding/assets/config/opencode.base.json" >/dev/null
 
 grep -F -- '--enable-log-requests' "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- 'HOST_DRIVER_LIB=/usr/lib/x86_64-linux-gnu' \
+    "${ROOT}/docker/start-vllm.sh" >/dev/null
+grep -F -- 'export LD_LIBRARY_PATH="${HOST_DRIVER_LIB}' \
+    "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--tensor-parallel-size' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--kv-cache-dtype' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--max-num-seqs' "${ROOT}/docker/start-vllm.sh" >/dev/null

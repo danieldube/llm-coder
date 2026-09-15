@@ -2,6 +2,15 @@
 set -euo pipefail
 
 VLLM_PYTHON=/usr/local/bin/python
+HOST_DRIVER_LIB=/usr/lib/x86_64-linux-gnu
+
+# RunPod mounts the host NVIDIA driver here. Its CUDA base image also registers
+# a newer cuda-compat libcuda first in ldconfig. That shim attempts unsupported
+# forward compatibility on RTX GPUs when the Pod host has an older driver.
+# Prefer the mounted driver while preserving any caller-supplied library paths.
+if [[ -f "${HOST_DRIVER_LIB}/libcuda.so.1" ]]; then
+    export LD_LIBRARY_PATH="${HOST_DRIVER_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
 
 if [[ "$#" -ne 14 ]]; then
     echo "Usage: ${0##*/} MODEL_ID MODEL_REVISION SERVED_MODEL_NAME CONTEXT_SIZE GPU_MEMORY_UTILIZATION TENSOR_PARALLEL_SIZE KV_CACHE_DTYPE ENFORCE_EAGER LANGUAGE_MODEL_ONLY MAX_NUM_SEQS REASONING_PARSER TOOL_CALL_PARSER PORT LOG_FILE" >&2
