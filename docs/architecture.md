@@ -242,6 +242,12 @@ installs the injected SSH public key, generates host keys at runtime, and runs
 `sshd`; it does not start a model server. `start-vllm` remains responsible for
 launching vLLM on `127.0.0.1` after the controller connects over SSH.
 
+The CUDA 12.9 image validation asserts PyTorch `2.13.0`, CUDA `12.9.x`, and
+vLLM `0.28.0`. It also runs `pip check`. At the currently inspected upstream
+image revision, that command reports that Torch requires NCCL `2.29.7` while
+the image contains `2.30.7`; the build reports this without replacing an
+upstream package. GPU qualification must determine whether it affects runtime.
+
 For private GHCR images, store a read-only package token as a RunPod registry
 credential and set only its ID locally. The publishing repository determines
 the image name; do not assume the example repository path is your output.

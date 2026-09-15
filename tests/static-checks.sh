@@ -47,6 +47,7 @@ grep -F -- 'validate-runtime' \
     "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
 grep -F -- '/usr/local/bin/vllm-python' \
     "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
+grep -F -- 'pip check' "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
 grep -F -- 'runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'VLLM_SOURCE_REVISION=2cf0a69' \

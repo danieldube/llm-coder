@@ -7,6 +7,8 @@ import sys
 import torch
 import vllm
 
+if torch.__version__.split('+', 1)[0] != '2.13.0':
+    raise RuntimeError(f'Expected PyTorch 2.13.0, found {torch.__version__}')
 if vllm.__version__ != '0.28.0':
     raise RuntimeError(f'Expected vLLM 0.28.0, found {vllm.__version__}')
 if torch.version.cuda is None or not torch.version.cuda.startswith('12.9'):
