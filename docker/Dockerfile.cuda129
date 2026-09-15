@@ -6,14 +6,17 @@ FROM vllm/vllm-openai:v0.28.0-cu129-ubuntu2404
 
 USER root
 
+COPY docker/vllm-python /usr/local/bin/vllm-python
+
 # A custom RunPod Pod image must provide its own SSH daemon. No inference
 # dependencies are installed or changed here.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         openssh-server \
     && rm -rf /var/lib/apt/lists/* \
-    && python -c "import torch, vllm; assert vllm.__version__ == '0.28.0'; assert torch.version.cuda is not None; assert torch.version.cuda.startswith('12.9')" \
-    && python -m pip check
+    && chmod 0755 /usr/local/bin/vllm-python \
+    && /usr/local/bin/vllm-python -c "import torch, vllm; assert vllm.__version__ == '0.28.0'; assert torch.version.cuda is not None; assert torch.version.cuda.startswith('12.9')" \
+    && /usr/local/bin/vllm-python -m pip check
 
 COPY docker/container-start.sh /usr/local/bin/container-start
 COPY docker/start-vllm.cuda129.sh /opt/llm-coding/bin/start-vllm.sh
@@ -21,6 +24,7 @@ COPY docker/validate-runtime /usr/local/bin/validate-runtime
 
 RUN chmod 0755 \
     /usr/local/bin/container-start \
+    /usr/local/bin/vllm-python \
     /opt/llm-coding/bin/start-vllm.sh \
     /usr/local/bin/validate-runtime
 

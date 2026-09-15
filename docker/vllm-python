@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The official image exposes vllm on PATH but does not promise a python alias.
+# Its console-script shebang names the interpreter that owns the vLLM runtime.
+vllm_launcher="$(command -v vllm)"
+vllm_python="$(head -n 1 "${vllm_launcher}" | sed 's/^#!//')"
+if [[ ! -x "${vllm_python}" ]]; then
+    echo 'The official vLLM launcher has no executable Python interpreter.' >&2
+    exit 127
+fi
+exec "${vllm_python}" "$@"

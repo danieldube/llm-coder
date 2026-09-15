@@ -89,13 +89,6 @@ jobs:
         run: |
           docker pull "$CANDIDATE"
           docker run --rm --entrypoint /usr/local/bin/validate-runtime "$CANDIDATE"
-          docker run --rm --entrypoint python "$CANDIDATE" -c '
-          import torch
-          import vllm
-          assert vllm.__version__ == "0.28.0"
-          assert torch.version.cuda is not None
-          assert torch.version.cuda.startswith("12.9")
-          '
 
       - name: Validate candidate SSH startup
         if: matrix.variant == 'cuda129'
