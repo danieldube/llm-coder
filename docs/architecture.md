@@ -99,11 +99,12 @@ Future installation or activation can recreate the integration.
 
 ## Remote runtime and storage
 
-The image retains the RunPod PyTorch base image's SSH startup command and uses
-its Python environment. The selected base supplies `torch==2.13.0`, matching
-the pinned vLLM wheel, so the image does not contain a second PyTorch runtime.
-The controller sends the packaged `remote/ensure-vllm.sh` over SSH; this script
-runs `/opt/llm-coding/bin/start-vllm.sh`, rather than installing dependencies.
+CUDA 12.8 retains the RunPod PyTorch base image's SSH startup command and
+contains its reviewed source-built vLLM. The CUDA 12.9 candidate starts from
+the official vLLM image, adds OpenSSH and the RunPod Pod startup contract, and
+does not install vLLM or PyTorch. The controller sends the packaged
+`remote/ensure-vllm.sh` over SSH; this script runs
+`/opt/llm-coding/bin/start-vllm.sh`, rather than installing dependencies.
 
 `/workspace/llm-coding/` contains the Hugging Face cache (`huggingface/`),
 `vllm.pid`, `vllm.log`, and `runtime.signature`. The script reuses a healthy
@@ -222,15 +223,24 @@ Use trusted repositories and read [SECURITY.md](../SECURITY.md).
 `.github/workflows/publish-runtime-image.yml` publishes CUDA 12.8 and CUDA 12.9
 `linux/amd64` variants to `ghcr.io/<owner>/<repository>-runtime` when Docker
 inputs, the model catalog, or the workflow change on `main`, or on manual
-dispatch. Each variant gets a `cuda<version>-sha-<commit>` traceability tag and
-a mutable `cuda<version>` alias. Current model profiles select `cuda128`, the
-compatibility baseline for Blackwell GPUs and 570-series drivers. The workflow
-publishes provenance using `GITHUB_TOKEN`.
+dispatch. Each variant first gets a `cuda<version>-sha-<commit>` candidate tag.
+The CUDA 12.9 candidate is checked for its official vLLM software contract and
+local SSH startup before its mutable `cuda129` alias is promoted. A failed
+candidate therefore leaves the preceding CUDA 12.9 alias intact. Current model
+profiles select `cuda128`, the compatibility baseline for Blackwell GPUs and
+570-series drivers. The workflow publishes provenance using `GITHUB_TOKEN`.
 
 Variant aliases are mutable. A model-contract change changes the persisted Pod
 specification fingerprint and causes the controller to replace its selected Pod.
-The base image is digest-pinned; the CUDA 12.8 source build is pinned to the
-reviewed vLLM release revision.
+The CUDA 12.8 base image and source build are pinned to reviewed revisions. The
+CUDA 12.9 Dockerfile uses the official `vllm/vllm-openai:v0.28.0-cu129-ubuntu2404`
+base and records a TODO until its manifest-list digest is independently verified.
+
+The official image supplies the CUDA runtime, PyTorch, and vLLM. llm-coding
+adds only its `start-vllm` launcher and a RunPod Pod startup script. The latter
+installs the injected SSH public key, generates host keys at runtime, and runs
+`sshd`; it does not start a model server. `start-vllm` remains responsible for
+launching vLLM on `127.0.0.1` after the controller connects over SSH.
 
 For private GHCR images, store a read-only package token as a RunPod registry
 credential and set only its ID locally. The publishing repository determines

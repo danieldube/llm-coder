@@ -36,7 +36,7 @@ changing lifecycle, networking, credentials, systemd, or remote execution.
 | Status and exit codes | `status.py` |
 | OpenCode release allowlist, config, ACP | `opencode.py` |
 | Dependency injection protocols | `interfaces.py` |
-| Remote build and launcher | `docker/Dockerfile`, `docker/start-vllm.sh` |
+| Remote build and launcher | `docker/Dockerfile.cuda128`, `docker/Dockerfile.cuda129`, `docker/start-vllm*.sh` |
 | Remote health/restart orchestration | `python-src/llm_coding/assets/remote/ensure-vllm.sh` |
 | Validation | `python-src/tests/`, `tests/static-checks.sh`, `.github/workflows/ci.yml` |
 

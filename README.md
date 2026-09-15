@@ -38,7 +38,7 @@ Edit `config.env` and `secrets.env` in that directory:
 
 - Set `RUNPOD_API_KEY` in `secrets.env`; do not export it to the agent.
 - Set `RUNPOD_IMAGE_REPOSITORY` to the repository containing the published
-  runtime image. `MODEL` uses its `latest` tag automatically. See
+  runtime image. `MODEL` selects its reviewed runtime variant. See
   [runtime image releases](docs/architecture.md#runtime-image-releases).
 - For a private image, set `RUNPOD_CONTAINER_REGISTRY_AUTH_ID` to a RunPod
   registry credential ID. Keep the registry token in RunPod.

@@ -64,9 +64,10 @@ eager mode, language-model-only mode, and the `qwen3` reasoning parser.
 `RUNPOD_IMAGE_REPOSITORY` supplies only the registry/repository prefix. The
 selected `MODEL` appends its reviewed runtime variant. All current profiles use
 the CUDA 12.8 `:cuda128` compatibility baseline, which supports Blackwell GPUs
-and 570-series RunPod drivers. The repository also publishes `:cuda129` for
-reviewed profiles that require it. Variant aliases are mutable; the controller
-replaces a selected Pod when the reviewed model contract changes.
+and 570-series RunPod drivers. The repository also publishes a CUDA 12.9
+candidate, but no reviewed profile selects it until real-GPU qualification is
+complete. Variant aliases are mutable; the controller replaces a selected Pod
+when the reviewed model contract changes.
 
 | Provider setting | Default | Contract |
 | --- | --- | --- |
@@ -83,7 +84,9 @@ replaces a selected Pod when the reviewed model contract changes.
 The create request uses the selected model's GPU count/type,
 `interruptible=false`, public IP support, and `22/tcp` only.
 The selected image must include this project's vLLM launcher and the RunPod
-SSH startup integration.
+SSH startup integration. The CUDA 12.9 candidate uses RunPod's documented
+`PUBLIC_KEY` environment variable; the controller sends its existing
+`SSH_PUBLIC_KEY` alias too while CUDA 12.8 remains a fallback.
 
 | Inference setting | Contract |
 | --- | --- |
@@ -98,11 +101,11 @@ and model support are runtime constraints beyond these numeric ranges. CUDA 12.8
 is built from the reviewed vLLM source revision because vLLM 0.28.0 does not
 publish a CUDA 12.8 wheel.
 
-The runtime image gives RunPod's mounted host NVIDIA driver precedence over the
-base image's CUDA forward-compatibility `libcuda` shim. This supports hosts
-whose driver is older than the image's CUDA toolkit, including RTX 5090 Pods
-with a 570-series driver. It does not make an unsupported GPU architecture or
-driver API available.
+CUDA 12.9 inherits CUDA, PyTorch, and vLLM from the official vLLM image. The
+image does not replace its driver-library or CUDA-compatibility configuration.
+CUDA 12.8 retains its existing driver handling. CUDA minor-version compatibility
+does not prove that PTX or lazily compiled Triton kernels work on an older host
+driver, so CUDA 12.9 needs a real-GPU inference qualification before use.
 
 | Lifecycle/integration setting | Default | Contract |
 | --- | --- | --- |

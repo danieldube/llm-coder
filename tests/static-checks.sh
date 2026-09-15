@@ -34,8 +34,17 @@ grep -F -- '--max-num-seqs' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--enforce-eager' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--language-model-only' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--reasoning-parser' "${ROOT}/docker/start-vllm.sh" >/dev/null
-grep -F -- 'runpod/pytorch:1.2.0-rc.162-cu1290-torch2130-ubuntu2404@sha256:8fb86016fe9b1a16dbe767318ccda9348b2fd161ba538dcc753180e831b93585' \
-    "${ROOT}/docker/Dockerfile" >/dev/null
+grep -F -- 'FROM vllm/vllm-openai:v0.28.0-cu129-ubuntu2404' \
+    "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
+grep -F -- 'ENTRYPOINT ["/usr/local/bin/container-start"]' \
+    "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
+grep -F -- '--host 127.0.0.1' \
+    "${ROOT}/docker/start-vllm.cuda129.sh" >/dev/null
+grep -F -- 'PasswordAuthentication=no' \
+    "${ROOT}/docker/container-start.sh" >/dev/null
+grep -F -- 'PUBLIC_KEY' "${ROOT}/docker/container-start.sh" >/dev/null
+grep -F -- 'validate-runtime' \
+    "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
 grep -F -- 'runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'VLLM_SOURCE_REVISION=2cf0a69' \
@@ -44,14 +53,18 @@ grep -F -- "'setuptools-rust>=1.9.0'" \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'apt-get install -y --no-install-recommends cargo' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
-grep -F -- 'matrix.variant' \
+grep -F -- 'candidate=${{ matrix.variant }}-${tag}' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
-grep -F -- 'uv pip install --system' "${ROOT}/docker/Dockerfile" >/dev/null
-grep -F -- '--break-system-packages' "${ROOT}/docker/Dockerfile" >/dev/null
-if grep -F -- 'uv venv' "${ROOT}/docker/Dockerfile"; then
-    echo 'Runtime image must use the compatible RunPod PyTorch environment.' >&2
-    exit 1
-fi
+grep -F -- 'Promote validated candidate to stable alias' \
+    "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
+for forbidden in \
+    'pip install vllm' 'uv pip install vllm' 'git clone vllm' cmake ninja cargo \
+    'pip install torch' 'uv pip install torch'; do
+    if grep -F -- "${forbidden}" "${ROOT}/docker/Dockerfile.cuda129"; then
+        echo "CUDA 12.9 image must not install or build ${forbidden}." >&2
+        exit 1
+    fi
+done
 
 while IFS= read -r metadata; do
     if [[ -e "${ROOT}/${metadata}" ]]; then

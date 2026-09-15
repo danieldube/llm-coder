@@ -35,10 +35,16 @@ rebuild the GPU image, rehash release binaries, or run live inference.
 
 ## Inference pins
 
-- [vLLM v0.28.0 release](https://github.com/vllm-project/vllm/releases/tag/v0.28.0)
-  and [PyPI metadata](https://pypi.org/project/vllm/0.28.0/). The CUDA 12.9
-  image downloads the release wheel; the CUDA 12.8 image builds the reviewed
-  release revision because no CUDA 12.8 wheel is published for this release.
+- [vLLM v0.28.0 release](https://github.com/vllm-project/vllm/releases/tag/v0.28.0),
+  which publishes `vllm/vllm-openai:v0.28.0-cu129-ubuntu2404`, and its
+  [Docker deployment documentation](https://docs.vllm.ai/en/latest/deployment/docker/).
+  CUDA 12.9 inherits that official image's CUDA, PyTorch, and vLLM packages;
+  CUDA 12.8 builds the reviewed release revision because no CUDA 12.8 wheel is
+  published for this release.
+- [NVIDIA CUDA 12.9 release notes](https://docs.nvidia.com/cuda/archive/12.9.0/pdf/CUDA_Toolkit_Release_Notes.pdf)
+  and [minor-version compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
+  CUDA 12.x minor compatibility has PTX and feature limitations, so import
+  checks do not qualify CUDA 12.9 for RTX 5090 inference.
 - [vLLM tool calling](https://docs.vllm.ai/en/latest/features/tool_calling/):
   documents the `qwen3_xml` parser for Qwen3-Coder.
 - [Qwen3-Coder-30B-A3B-Instruct-FP8](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8)

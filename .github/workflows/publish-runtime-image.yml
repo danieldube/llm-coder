@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Optional immutable image tag (defaults to the commit SHA)'
+        description: 'Optional immutable image tag suffix (defaults to commit SHA)'
         required: false
         type: string
 
@@ -36,11 +36,11 @@ jobs:
           - variant: cuda128
             dockerfile: docker/Dockerfile.cuda128
           - variant: cuda129
-            dockerfile: docker/Dockerfile
+            dockerfile: docker/Dockerfile.cuda129
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select image tag
+      - name: Select immutable candidate tag
         id: image
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -52,7 +52,7 @@ jobs:
               exit 1
               ;;
           esac
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "candidate=${{ matrix.variant }}-${tag}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -62,23 +62,96 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push runtime image
+      - name: Inspect official CUDA 12.9 base
+        if: matrix.variant == 'cuda129'
+        run: |
+          docker buildx imagetools inspect \
+            vllm/vllm-openai:v0.28.0-cu129-ubuntu2404
+
+      - name: Build and push immutable candidate
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: docker
+          context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }}-${{ steps.image.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ matrix.variant }}-${{ steps.image.outputs.tag }}
+            org.opencontainers.image.version=${{ steps.image.outputs.candidate }}
 
-      - name: Attest image provenance
+      - name: Validate candidate software contract
+        if: matrix.variant == 'cuda129'
+        env:
+          CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
+        run: |
+          docker pull "$CANDIDATE"
+          docker run --rm --entrypoint /usr/local/bin/validate-runtime "$CANDIDATE"
+          docker run --rm --entrypoint python "$CANDIDATE" -c '
+          import torch
+          import vllm
+          assert vllm.__version__ == "0.28.0"
+          assert torch.version.cuda is not None
+          assert torch.version.cuda.startswith("12.9")
+          '
+
+      - name: Validate candidate SSH startup
+        if: matrix.variant == 'cuda129'
+        env:
+          CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
+        run: |
+          key_dir="$(mktemp -d)"
+          container_name="llm-coding-ssh-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+            rm -rf "$key_dir"
+          }
+          trap cleanup EXIT
+          ssh-keygen -q -t ed25519 -N '' -f "$key_dir/id_ed25519"
+          docker run -d --rm --name "$container_name" -p 127.0.0.1::22 \
+            -e "PUBLIC_KEY=$(<"$key_dir/id_ed25519.pub")" "$CANDIDATE"
+          for _ in $(seq 1 30); do
+            port="$(docker port "$container_name" 22/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+            if [[ -n "$port" ]] && ssh -q -o BatchMode=yes \
+              -o StrictHostKeyChecking=accept-new \
+              -o UserKnownHostsFile="$key_dir/known_hosts" \
+              -o ConnectTimeout=1 -i "$key_dir/id_ed25519" \
+              -p "$port" root@127.0.0.1 true; then
+              break
+            fi
+            sleep 1
+          done
+          test -n "${port:-}"
+          ssh -q -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$key_dir/known_hosts" -i "$key_dir/id_ed25519" \
+            -p "$port" root@127.0.0.1 true
+          docker exec "$container_name" pgrep -x sshd
+          if docker exec "$container_name" pgrep -f '^vllm serve'; then
+            echo 'vLLM started before the controller requested it.' >&2
+            exit 1
+          fi
+          docker restart "$container_name" >/dev/null
+          for _ in $(seq 1 30); do
+            if ssh -q -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$key_dir/known_hosts" \
+              -o ConnectTimeout=1 -i "$key_dir/id_ed25519" \
+              -p "$port" root@127.0.0.1 true; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'SSH host key or daemon did not survive a container restart.' >&2
+          exit 1
+
+      - name: Promote validated candidate to stable alias
+        env:
+          CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
+          STABLE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }}
+        run: docker buildx imagetools create --tag "$STABLE" "$CANDIDATE"
+
+      - name: Attest candidate provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}

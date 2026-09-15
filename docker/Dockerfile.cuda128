@@ -39,5 +39,5 @@ RUN case "${TARGETARCH:-amd64}" in \
     && "${VLLM_PYTHON}" -c \
         "import torch, vllm; assert torch.version.cuda.startswith('12.8'); assert vllm.__version__ == '${VLLM_VERSION}'"
 
-COPY start-vllm.sh /opt/llm-coding/bin/start-vllm.sh
+COPY docker/start-vllm.sh /opt/llm-coding/bin/start-vllm.sh
 RUN chmod 0755 /opt/llm-coding/bin/start-vllm.sh

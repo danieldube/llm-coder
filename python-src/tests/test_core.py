@@ -253,7 +253,13 @@ class FocusedModuleTests(unittest.TestCase):
     ) -> None:
         config = settings(Path('/tmp'))
         body = pod_create_body(config, 'ssh-ed25519 public')
-        self.assertEqual(body['env'], {'SSH_PUBLIC_KEY': 'ssh-ed25519 public'})
+        self.assertEqual(
+            body['env'],
+            {
+                'PUBLIC_KEY': 'ssh-ed25519 public',
+                'SSH_PUBLIC_KEY': 'ssh-ed25519 public',
+            },
+        )
         self.assertNotIn('containerRegistryAuthId', body)
         self.assertEqual(body['gpuTypePriority'], 'availability')
 

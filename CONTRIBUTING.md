@@ -43,7 +43,8 @@ CI also verifies that Python 3.10 rejects the wheel via `Requires-Python`.
 When `docker/**`, `.dockerignore`, or Docker CI changes, also run:
 
 ```bash
-docker build --tag llm-coding-runtime:local docker
+docker build -f docker/Dockerfile.cuda129 \
+  --tag llm-coding-runtime:local .
 ```
 
 All behavior changes require focused unit tests. Do not run live activation
