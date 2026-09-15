@@ -55,6 +55,7 @@ grep -F -- "'setuptools-rust>=1.9.0'" \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
 grep -F -- 'apt-get install -y --no-install-recommends cargo' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
+# shellcheck disable=SC2016 # The GitHub Actions expression is literal text.
 grep -F -- 'candidate=${{ matrix.variant }}-${tag}' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
 grep -F -- 'Promote validated candidate to stable alias' \
