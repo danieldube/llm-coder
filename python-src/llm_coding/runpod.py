@@ -23,6 +23,10 @@ class RunPodAPIError(RuntimeError):
         self.status_code = status_code
 
 
+class RunPodPodStoppedError(RuntimeError):
+    """Raised when a Pod stops before its requested SSH endpoint exists."""
+
+
 @dataclass(frozen=True)
 class RunPodEndpoint:
     """A validated public endpoint exposed by a RunPod pod."""
@@ -154,6 +158,11 @@ class RunPodClient:
         """Return the validated SSH endpoint, or ``None`` while pending."""
         pod = self.get_pod(pod_id)
         endpoint = f'GET /pods/{pod_id}'
+        if pod['desiredStatus'] in {'EXITED', 'TERMINATED'}:
+            raise RunPodPodStoppedError(
+                f'RunPod pod {pod_id} {pod["desiredStatus"].lower()} '
+                'before it exposed SSH'
+            )
         host = pod.get('publicIp')
         mappings = pod.get('portMappings')
         # RunPod can report RUNNING before it assigns the public address and

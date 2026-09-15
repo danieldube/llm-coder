@@ -107,7 +107,7 @@ driver API available.
 | Lifecycle/integration setting | Default | Contract |
 | --- | --- | --- |
 | `IDLE_SHUTDOWN` | `30min` | Positive integer followed by `us`, `ms`, `s`, `min`, `h`, `d`, or `w` |
-| `RUNPOD_START_TIMEOUT_SECONDS` | `1200` | 1–86400; endpoint discovery and SSH readiness |
+| `RUNPOD_START_TIMEOUT_SECONDS` | `1200` | 1–86400; endpoint discovery and SSH readiness; a Pod that exits fails immediately |
 | `VLLM_START_TIMEOUT_SECONDS` | `1800` | 1–86400; remote health polling |
 | `LIFECYCLE_LOCK_TIMEOUT_SECONDS` | `30` | 1–300; full installation always uses 30 seconds |
 | `JETBRAINS_AGENT_NAME` | `OpenCode RunPod` | ACP entry name |

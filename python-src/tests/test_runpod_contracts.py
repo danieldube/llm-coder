@@ -13,7 +13,12 @@ from unittest.mock import MagicMock, call, patch
 import requests
 from llm_coding import runtime
 from llm_coding.config import Settings
-from llm_coding.runpod import RunPodAPIError, RunPodClient, RunPodProtocolError
+from llm_coding.runpod import (
+    RunPodAPIError,
+    RunPodClient,
+    RunPodPodStoppedError,
+    RunPodProtocolError,
+)
 from llm_coding.ssh import prepare_endpoint
 from llm_coding.state import FileStateStore
 
@@ -165,6 +170,39 @@ class TestRunPodContracts(unittest.TestCase):
             return_value=self._response(pod),
         ):
             self.assertIsNone(RunPodClient('key').get_pod_endpoint('pod-1'))
+
+    def test_ssh_endpoint_fails_when_pod_stops_while_pending(self) -> None:
+        pod: dict[str, object] = {
+            **_pod(),
+            'desiredStatus': 'EXITED',
+            'publicIp': '',
+            'portMappings': None,
+        }
+        with (
+            patch(
+                'llm_coding.runpod.requests.request',
+                return_value=self._response(pod),
+            ),
+            self.assertRaisesRegex(
+                RunPodPodStoppedError,
+                'pod-1 exited before it exposed SSH',
+            ),
+        ):
+            RunPodClient('key').get_pod_endpoint('pod-1')
+
+    def test_runtime_explains_stopped_pod_before_ssh_is_available(
+        self,
+    ) -> None:
+        client = MagicMock()
+        client.get_pod_endpoint.side_effect = RunPodPodStoppedError(
+            'RunPod pod pod-1 exited before it exposed SSH'
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'Inspect the Pod activity in the RunPod console',
+        ):
+            runtime._pod_endpoint_or_raise(client, 'pod-1')
 
     def test_ssh_endpoint_requires_a_non_empty_string_host(self) -> None:
         invalid_hosts: tuple[object, ...] = ('', [], True)

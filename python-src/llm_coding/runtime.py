@@ -31,6 +31,7 @@ from .runpod import (
     RunPodAPIError,
     RunPodClient,
     RunPodEndpoint,
+    RunPodPodStoppedError,
     pod_create_body,
 )
 from .ssh import command as ssh_command
@@ -139,6 +140,19 @@ def _startup_timeout_seconds(config: Settings) -> int:
 def _lock_timeout_seconds(config: Settings) -> int:
     """Allow lightweight compatibility settings used by external callers."""
     return getattr(config, 'lifecycle_lock_timeout_seconds', 30)
+
+
+def _pod_endpoint_or_raise(
+    client: PodProvider, pod_id: str
+) -> RunPodEndpoint | None:
+    """Return a pending endpoint unless the Pod has stopped permanently."""
+    try:
+        return client.get_pod_endpoint(pod_id)
+    except RunPodPodStoppedError as exc:
+        raise RuntimeError(
+            f'{exc}. Inspect the Pod activity in the RunPod console, then '
+            'retry llm-up.'
+        ) from None
 
 
 def install_systemd(config: Settings | None = None) -> None:
@@ -413,7 +427,7 @@ def up(
         port: int | None = None
         state.set_activation_status('Waiting for RunPod to expose SSH')
         while deps.monotonic() < deadline:
-            pod_endpoint = client.get_pod_endpoint(pod_id)
+            pod_endpoint = _pod_endpoint_or_raise(client, pod_id)
             if pod_endpoint is not None:
                 host, port = pod_endpoint.host, pod_endpoint.port
                 break
@@ -439,7 +453,7 @@ def up(
                     'SSH host key mismatch at unchanged endpoint '
                     f'[{host}]:{port}; refusing automatic recovery'
                 )
-            pod_endpoint = client.get_pod_endpoint(pod_id)
+            pod_endpoint = _pod_endpoint_or_raise(client, pod_id)
             if pod_endpoint is not None and (
                 pod_endpoint.host,
                 pod_endpoint.port,
