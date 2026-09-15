@@ -160,18 +160,12 @@ jobs:
             echo 'vLLM started before the controller requested it.' >&2
             exit 1
           fi
-          docker restart "$container_name" >/dev/null
-          for _ in $(seq 1 30); do
-            if ssh -q -o BatchMode=yes -o StrictHostKeyChecking=yes \
-              -o UserKnownHostsFile="$key_dir/known_hosts" \
-              -o ConnectTimeout=1 -i "$key_dir/id_ed25519" \
-              -p "$port" root@127.0.0.1 true; then
-              exit 0
-            fi
-            sleep 1
-          done
-          echo 'SSH host key or daemon did not survive a container restart.' >&2
-          exit 1
+          sleep 1
+          test "$(docker inspect -f '{{.State.Running}}' "$container_name")" = true
+          ssh -q -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$key_dir/known_hosts" \
+            -o ConnectTimeout=1 -i "$key_dir/id_ed25519" \
+            -p "$port" root@127.0.0.1 true
 
       - name: Promote validated candidate to stable alias
         env:
