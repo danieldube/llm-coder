@@ -233,6 +233,12 @@ Actions BuildKit cache scope. This accelerates repeat builds without changing
 the reviewed source dependencies. In particular, do not force CUDA-13
 packages out of the pinned vLLM source requirements: that source explicitly
 declares some CUDA-13 build dependencies.
+
+`restore-cuda128-from-latest.yml` is an emergency rollback workflow. It only
+retags the previously published `:latest` manifest as `:cuda128`; it does not
+build, test, or alter the manifest. Use it only to restore image availability
+when the CUDA 12.8 source build cannot complete. It does not qualify the image
+as CUDA 12.8 or replace the required RunPod GPU smoke test.
 The CUDA 12.9 candidate is checked for its official vLLM software contract and
 local SSH startup before its mutable `cuda129` alias is promoted. A failed
 candidate therefore leaves the preceding CUDA 12.9 alias intact. Current model
