@@ -65,6 +65,10 @@ grep -F -- 'file: docker/Dockerfile.cuda128' \
     "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
 grep -F -- 'cancel-in-progress: false' \
     "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
+grep -F -- 'timeout-minutes: 45' \
+    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
+grep -F -- 'cache-to: type=gha,mode=max,scope=cuda128-runtime' \
+    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
 for forbidden in \
     'pip install vllm' 'uv pip install vllm' 'git clone vllm' cmake ninja cargo \
     'pip install torch' 'uv pip install torch'; do

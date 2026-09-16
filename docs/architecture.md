@@ -227,6 +227,12 @@ Use trusted repositories and read [SECURITY.md](../SECURITY.md).
 Docker inputs or a manual dispatch. This keeps the slow CUDA 12.8 source build
 independent of CUDA 12.9 work. Each variant first gets a
 `cuda<version>-sha-<commit>` candidate tag.
+
+The CUDA 12.8 workflow has a 45-minute job limit and a dedicated GitHub
+Actions BuildKit cache scope. This accelerates repeat builds without changing
+the reviewed source dependencies. In particular, do not force CUDA-13
+packages out of the pinned vLLM source requirements: that source explicitly
+declares some CUDA-13 build dependencies.
 The CUDA 12.9 candidate is checked for its official vLLM software contract and
 local SSH startup before its mutable `cuda129` alias is promoted. A failed
 candidate therefore leaves the preceding CUDA 12.9 alias intact. Current model
