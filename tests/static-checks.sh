@@ -50,12 +50,18 @@ grep -F -- '/usr/local/bin/vllm-python' \
 grep -F -- 'pip check' "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
 grep -F -- 'runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
-grep -F -- 'VLLM_SOURCE_REVISION=2cf0a69' \
+grep -F -- 'vllm-cu128-wheel-manifest.json' \
     "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
-grep -F -- "'setuptools-rust>=1.9.0'" \
-    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
-grep -F -- 'apt-get install -y --no-install-recommends cargo' \
-    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
+grep -F -- '2cf0a6915ce544dc493a0990f2ea38d81601128a' \
+    "${ROOT}/docker/Dockerfile.cuda128-wheel" >/dev/null
+grep -F -- 'TORCH_CUDA_ARCH_LIST' \
+    "${ROOT}/docker/Dockerfile.cuda128-wheel" >/dev/null
+for forbidden in 'git clone' 'cargo' 'cmake' 'ninja' 'setuptools-rust'; do
+    if grep -F -- "${forbidden}" "${ROOT}/docker/Dockerfile.cuda128"; then
+        echo "CUDA 12.8 runtime must not compile vLLM: ${forbidden}." >&2
+        exit 1
+    fi
+done
 # shellcheck disable=SC2016 # The Docker tag template is literal workflow text.
 grep -F -- 'candidate=cuda129-${tag}' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
@@ -63,12 +69,14 @@ grep -F -- 'Promote validated candidate to stable alias' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
 grep -F -- 'file: docker/Dockerfile.cuda128' \
     "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
-grep -F -- 'cancel-in-progress: false' \
+grep -F -- 'gh release download' \
     "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
-grep -F -- 'timeout-minutes: 45' \
+grep -F -- 'Promote validated candidate to stable alias' \
     "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
-grep -F -- 'cache-to: type=gha,mode=max,scope=cuda128-runtime' \
-    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
+grep -F -- 'runs-on: [self-hosted, linux, x64, cuda-wheel-builder]' \
+    "${ROOT}/.github/workflows/build-cuda128-vllm-wheel.yml" >/dev/null
+grep -F -- 'gh release create' \
+    "${ROOT}/.github/workflows/build-cuda128-vllm-wheel.yml" >/dev/null
 grep -F -- 'Restore CUDA 12.8 fallback alias' \
     "${ROOT}/.github/workflows/restore-cuda128-from-latest.yml" >/dev/null
 for forbidden in \

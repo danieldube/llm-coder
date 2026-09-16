@@ -7,6 +7,8 @@ on:
     paths:
       - 'docker/Dockerfile.cuda128'
       - 'docker/start-vllm.sh'
+      - 'docker/validate-runtime.cuda128'
+      - 'docker/verify-vllm-cu128-wheel.py'
       - '.dockerignore'
       - '.github/workflows/publish-cuda128-runtime-image.yml'
   workflow_dispatch:
@@ -29,13 +31,59 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}-runtime
+  WHEEL_RELEASE: vllm-cu128-wheel-0.28.0-2cf0a6915ce544dc493a0990f2ea38d81601128a-torch2.13.0-linux-amd64
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download immutable CUDA 12.8 wheel release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          wheel_dir=docker/vllm-cu128-wheel
+          find "$wheel_dir" -mindepth 1 -maxdepth 1 -type f -delete
+          gh release download "$WHEEL_RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.whl' \
+            --pattern 'vllm-cu128-wheel-manifest.json' \
+            --dir "$wheel_dir"
+          test "$(find "$wheel_dir" -maxdepth 1 -name '*.whl' -type f | wc -l)" = 1
+          test -f "$wheel_dir/vllm-cu128-wheel-manifest.json"
+
+      - name: Verify wheel release manifest
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          directory = Path('docker/vllm-cu128-wheel')
+          manifest = json.loads(
+              (directory / 'vllm-cu128-wheel-manifest.json').read_text()
+          )
+          wheels = list(directory.glob('*.whl'))
+          if len(wheels) != 1:
+              raise SystemExit('Expected exactly one CUDA 12.8 wheel')
+          wheel = wheels[0]
+          if manifest.get('wheel_filename') != wheel.name:
+              raise SystemExit('Wheel filename does not match manifest')
+          actual = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          if manifest.get('wheel_sha256') != actual:
+              raise SystemExit('Wheel SHA256 does not match manifest')
+          required = {
+              'vllm_version': '0.28.0',
+              'vllm_commit': '2cf0a6915ce544dc493a0990f2ea38d81601128a',
+              'torch_version': '2.13.0',
+              'torch_cuda': '12.8',
+              'target_platform': 'linux/amd64',
+              'architectures': ['8.9', '9.0', '12.0'],
+          }
+          for key, value in required.items():
+              if manifest.get(key) != value:
+                  raise SystemExit(f'Unexpected wheel manifest value: {key}')
+          PY
 
       - name: Select immutable candidate tag
         id: image
@@ -68,18 +116,19 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
-          cache-from: type=gha,scope=cuda128-runtime
-          cache-to: type=gha,mode=max,scope=cuda128-runtime
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.image.outputs.candidate }}
 
-      - name: Promote candidate to stable alias
+      - name: Validate candidate software contract
         env:
           CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
-          STABLE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cuda128
-        run: docker buildx imagetools create --tag "$STABLE" "$CANDIDATE"
+        run: |
+          docker pull "$CANDIDATE"
+          docker run --rm --entrypoint /usr/local/bin/validate-runtime "$CANDIDATE"
+          docker run --rm --entrypoint /bin/bash "$CANDIDATE" -c \
+            'test -x /opt/llm-coding/bin/start-vllm.sh'
 
       - name: Attest candidate provenance
         uses: actions/attest-build-provenance@v2
@@ -87,3 +136,9 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+      - name: Promote validated candidate to stable alias
+        env:
+          CANDIDATE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.candidate }}
+          STABLE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cuda128
+        run: docker buildx imagetools create --tag "$STABLE" "$CANDIDATE"

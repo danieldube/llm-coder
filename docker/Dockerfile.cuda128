@@ -1,45 +1,36 @@
-# CUDA 12.8 is the compatibility baseline for Blackwell and RunPod's
-# 570-series drivers. Keep the base image's SSH entrypoint and command: the
-# controller relies on its SSH_PUBLIC_KEY startup integration. Its release is
-# intentionally independent from CUDA 12.9 changes because this source build
-# takes substantially longer than the official CUDA 12.9 image build.
+# CUDA 12.8 fallback runtime. Native vLLM compilation belongs exclusively in
+# Dockerfile.cuda128-wheel, which publishes a verified release artifact.
 FROM runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3
 
-ARG VLLM_VERSION=0.28.0
-ARG VLLM_SOURCE_REVISION=2cf0a69
 ARG TARGETARCH
-
 ENV VLLM_PYTHON=/usr/local/bin/python
 
-# vLLM 0.28.0 publishes CUDA 12.9 and 13.0 wheels only. Build the reviewed
-# release revision against the base image's CUDA 12.8 PyTorch installation;
-# dependencies remain in the image and are never installed on a live Pod.
-# --no-build-isolation requires vLLM's declared backend dependencies to already
-# exist in the image. Keep these bounds synchronized with the pinned source
-# revision's pyproject.toml. The source build also compiles vLLM's Rust
-# extensions, so install Cargo in the build image.
-RUN case "${TARGETARCH:-amd64}" in \
-        amd64) ;; \
-        *) echo "CUDA 12.8 runtime supports only linux/amd64" >&2; exit 1 ;; \
-    esac \
-    && "${VLLM_PYTHON}" -c \
-        "import torch; assert torch.__version__.split('+', 1)[0] == '2.13.0'" \
-    && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cargo \
-    && rm -rf /var/lib/apt/lists/* \
-    && uv pip install --system --break-system-packages \
-        'cmake>=3.26.1' \
-        ninja \
-        'packaging>=24.2' \
-        'setuptools>=77.0.3,<81.0.0' \
-        'setuptools-scm>=8.0' \
-        'setuptools-rust>=1.9.0' \
-        wheel \
-        jinja2 \
-    && uv pip install --system --break-system-packages --no-build-isolation \
-        "git+https://github.com/vllm-project/vllm.git@${VLLM_SOURCE_REVISION}" \
-    && "${VLLM_PYTHON}" -c \
-        "import torch, vllm; assert torch.version.cuda.startswith('12.8'); assert vllm.__version__ == '${VLLM_VERSION}'"
-
+COPY docker/vllm-cu128-wheel/ /opt/llm-coding/wheel/
 COPY docker/start-vllm.sh /opt/llm-coding/bin/start-vllm.sh
-RUN chmod 0755 /opt/llm-coding/bin/start-vllm.sh
+COPY docker/validate-runtime.cuda128 /usr/local/bin/validate-runtime
+COPY docker/verify-vllm-cu128-wheel.py /usr/local/bin/verify-vllm-cu128-wheel
+
+RUN <<'EOF'
+set -eu
+case "${TARGETARCH:-amd64}" in
+    amd64) ;;
+    *) echo "CUDA 12.8 runtime supports only linux/amd64" >&2; exit 1 ;;
+esac
+"${VLLM_PYTHON}" - <<'PY'
+import torch
+
+assert torch.__version__.split('+', 1)[0] == '2.13.0'
+assert torch.version.cuda is not None
+assert torch.version.cuda.startswith('12.8')
+PY
+wheel_count="$(find /opt/llm-coding/wheel -maxdepth 1 -name '*.whl' -type f | wc -l)"
+test "$wheel_count" = 1
+test -f /opt/llm-coding/wheel/vllm-cu128-wheel-manifest.json
+wheel="$("${VLLM_PYTHON}" /usr/local/bin/verify-vllm-cu128-wheel \
+    /opt/llm-coding/wheel)"
+wheel="/opt/llm-coding/wheel/${wheel}"
+"${VLLM_PYTHON}" -m pip install --break-system-packages "$wheel"
+chmod 0755 /usr/local/bin/validate-runtime /opt/llm-coding/bin/start-vllm.sh
+/usr/local/bin/validate-runtime
+rm -rf /opt/llm-coding/wheel
+EOF

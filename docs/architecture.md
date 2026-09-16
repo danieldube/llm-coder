@@ -223,16 +223,29 @@ Use trusted repositories and read [SECURITY.md](../SECURITY.md).
 `.github/workflows/publish-cuda128-runtime-image.yml` and
 `.github/workflows/publish-runtime-image.yml` publish the CUDA 12.8 and CUDA
 12.9 `linux/amd64` variants, respectively, to
-`ghcr.io/<owner>/<repository>-runtime`. Each workflow runs only for its own
-Docker inputs or a manual dispatch. This keeps the slow CUDA 12.8 source build
-independent of CUDA 12.9 work. Each variant first gets a
-`cuda<version>-sha-<commit>` candidate tag.
+`ghcr.io/<owner>/<repository>-runtime`. Both push a
+`cuda<version>-sha-<commit>` candidate, validate it, attest it, and only then
+move the stable variant alias. A failed build or validation therefore leaves
+the last validated `cuda128` or `cuda129` alias unchanged.
 
-The CUDA 12.8 workflow has a 45-minute job limit and a dedicated GitHub
-Actions BuildKit cache scope. This accelerates repeat builds without changing
-the reviewed source dependencies. In particular, do not force CUDA-13
-packages out of the pinned vLLM source requirements: that source explicitly
-declares some CUDA-13 build dependencies.
+CUDA 12.9 is a thin image based on the official
+`vllm/vllm-openai:v0.28.0-cu129-ubuntu2404` runtime. It adds OpenSSH, the
+RunPod startup wrapper, the loopback-only launcher, and diagnostics. It does
+not reinstall PyTorch, CUDA, or vLLM. The image starts `sshd` only; the
+controller requests vLLM after connecting over SSH.
+
+CUDA 12.8 is the fallback. Its vLLM wheel is built by the manually triggered
+`build-cuda128-vllm-wheel.yml` workflow on a persistent self-hosted runner
+labelled `cuda-wheel-builder`; GitHub-hosted runners are not authoritative
+builders. The builder uses the pinned RunPod PyTorch base, full vLLM source
+revision `2cf0a6915ce544dc493a0990f2ea38d81601128a`, existing Torch, and
+`TORCH_CUDA_ARCH_LIST='8.9;9.0;12.0'`. It uses `sccache`, emits a JSON manifest
+and SHA256, and publishes the wheel and manifest as an immutable-by-policy
+GitHub Release named
+`vllm-cu128-wheel-0.28.0-2cf0a6915ce544dc493a0990f2ea38d81601128a-torch2.13.0-linux-amd64`.
+The ordinary CUDA 12.8 image workflow downloads that release, verifies the
+manifest and checksum before the Docker build, and repeats those checks inside
+the Dockerfile before installing the wheel. It performs no native compilation.
 
 `restore-cuda128-from-latest.yml` is an emergency rollback workflow. It only
 retags the previously published `:latest` manifest as `:cuda128`; it does not
@@ -262,6 +275,10 @@ vLLM `0.28.0`. It also runs `pip check`. At the currently inspected upstream
 image revision, that command reports that Torch requires NCCL `2.29.7` while
 the image contains `2.30.7`; the build reports this without replacing an
 upstream package. GPU qualification must determine whether it affects runtime.
+
+See [runtime qualification](runtime-qualification.md) for the required RunPod
+GPU gate and its recorded results. No model profile switches to CUDA 12.9 until
+the applicable real-GPU inference qualification is recorded.
 
 For private GHCR images, store a read-only package token as a RunPod registry
 credential and set only its ID locally. The publishing repository determines

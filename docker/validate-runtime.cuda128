@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /usr/local/bin/python - <<'PY'
+import sys
+
+import torch
+import vllm
+
+if torch.__version__.split('+', 1)[0] != '2.13.0':
+    raise RuntimeError(f'Expected PyTorch 2.13.0, found {torch.__version__}')
+if vllm.__version__ != '0.28.0':
+    raise RuntimeError(f'Expected vLLM 0.28.0, found {vllm.__version__}')
+if torch.version.cuda is None or not torch.version.cuda.startswith('12.8'):
+    raise RuntimeError(
+        f'Expected PyTorch CUDA 12.8, found {torch.version.cuda}'
+    )
+
+available = torch.cuda.is_available()
+print(f'python={sys.version.split()[0]}')
+print(f'torch={torch.__version__}')
+print(f'torch_cuda={torch.version.cuda}')
+print(f'vllm={vllm.__version__}')
+print(f'cuda_available={available}')
+if available:
+    print(f'gpu={torch.cuda.get_device_name(0)}')
+    print(f'capability={torch.cuda.get_device_capability(0)}')
+PY

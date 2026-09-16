@@ -1,0 +1,44 @@
+# This image is only an artifact builder. It is never used as a RunPod runtime.
+FROM runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3 AS build
+
+ARG GIT_REVISION
+ARG VLLM_SOURCE_REVISION=2cf0a6915ce544dc493a0990f2ea38d81601128a
+ARG VLLM_VERSION=0.28.0
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    SCCACHE_DIR=/var/cache/sccache \
+    SCCACHE_CACHE_SIZE=80G \
+    TORCH_CUDA_ARCH_LIST='8.9;9.0;12.0' \
+    VLLM_PYTHON=/usr/local/bin/python \
+    VLLM_SOURCE_REVISION=${VLLM_SOURCE_REVISION} \
+    VLLM_VERSION=${VLLM_VERSION} \
+    GIT_REVISION=${GIT_REVISION}
+
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) ;; \
+        *) echo "CUDA 12.8 wheel supports only linux/amd64" >&2; exit 1 ;; \
+    esac \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends cargo git sccache \
+    && rm -rf /var/lib/apt/lists/* \
+    && uv pip install --system --break-system-packages \
+        'build>=1.2' \
+        'cmake>=3.26.1' \
+        ninja \
+        'packaging>=24.2' \
+        'setuptools>=77.0.3,<81.0.0' \
+        'setuptools-scm>=8.0' \
+        'setuptools-rust>=1.9.0' \
+        wheel \
+        jinja2
+
+COPY docker/build-vllm-cu128-wheel.sh /usr/local/bin/build-vllm-cu128-wheel
+RUN chmod 0755 /usr/local/bin/build-vllm-cu128-wheel
+
+RUN --mount=type=cache,target=/var/cache/sccache \
+    --mount=type=cache,target=/root/.cache/uv \
+    /usr/local/bin/build-vllm-cu128-wheel
+
+FROM scratch AS release
+COPY --from=build /release/ /

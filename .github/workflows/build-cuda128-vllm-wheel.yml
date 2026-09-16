@@ -1,0 +1,93 @@
+name: Build CUDA 12.8 vLLM wheel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-cuda128-vllm-wheel
+  cancel-in-progress: false
+
+env:
+  WHEEL_RELEASE: vllm-cu128-wheel-0.28.0-2cf0a6915ce544dc493a0990f2ea38d81601128a-torch2.13.0-linux-amd64
+
+jobs:
+  build:
+    # This label must be installed on a persistent x86-64 Linux runner with at
+    # least 8 vCPU, 32 GB RAM, and 100 GB SSD. GitHub-hosted runners are not
+    # suitable for this native CUDA build.
+    runs-on: [self-hosted, linux, x64, cuda-wheel-builder]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Refuse to overwrite an existing immutable wheel release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$WHEEL_RELEASE" --repo "$GITHUB_REPOSITORY"; then
+            echo 'Wheel release already exists; it is immutable by policy.' >&2
+            exit 1
+          fi
+
+      - name: Build wheel artifact
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda128-wheel
+          target: release
+          platforms: linux/amd64
+          outputs: type=local,dest=wheel-output
+          build-args: |
+            GIT_REVISION=${{ github.sha }}
+
+      - name: Verify generated wheel and manifest
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          directory = Path('wheel-output')
+          manifest = json.loads(
+              (directory / 'vllm-cu128-wheel-manifest.json').read_text()
+          )
+          wheels = list(directory.glob('*.whl'))
+          if len(wheels) != 1:
+              raise SystemExit('Builder did not produce exactly one wheel')
+          wheel = wheels[0]
+          if manifest.get('wheel_filename') != wheel.name:
+              raise SystemExit('Wheel filename does not match manifest')
+          actual = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          if manifest.get('wheel_sha256') != actual:
+              raise SystemExit('Wheel SHA256 does not match manifest')
+          expected = {
+              'vllm_version': '0.28.0',
+              'vllm_commit': '2cf0a6915ce544dc493a0990f2ea38d81601128a',
+              'base_image': 'runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404',
+              'base_image_digest': (
+                  'sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3'
+              ),
+              'torch_version': '2.13.0',
+              'torch_cuda': '12.8',
+              'target_platform': 'linux/amd64',
+              'architectures': ['8.9', '9.0', '12.0'],
+          }
+          for key, value in expected.items():
+              if manifest.get(key) != value:
+                  raise SystemExit(f'Unexpected wheel manifest value: {key}')
+          PY
+
+      - name: Publish immutable GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$WHEEL_RELEASE" wheel-output/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title 'vLLM 0.28.0 CUDA 12.8 wheel' \
+            --notes 'Native wheel for the pinned CUDA 12.8 RunPod runtime. See the JSON manifest for the complete ABI identity and SHA256.'

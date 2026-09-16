@@ -99,12 +99,36 @@ MODEL_SPECS: dict[str, ModelSpec] = {
 }
 
 
+_RUNTIME_CONTRACTS = {
+    'cuda128': ('0.28.0', '128'),
+    'cuda129': ('0.28.0', '129'),
+}
+
+
+def validate_runtime_contract(spec: ModelSpec) -> None:
+    """Reject a profile whose reviewed image and vLLM contract disagree."""
+    expected = _RUNTIME_CONTRACTS.get(spec.runtime_image_tag)
+    if expected is None:
+        supported = ', '.join(sorted(_RUNTIME_CONTRACTS))
+        raise ValueError(
+            f'Unsupported runtime image tag {spec.runtime_image_tag!r}; '
+            f'expected one of: {supported}'
+        )
+    if (spec.vllm_version, spec.vllm_cuda_version) != expected:
+        raise ValueError(
+            f'Runtime image tag {spec.runtime_image_tag!r} requires vLLM '
+            f'{expected[0]} cu{expected[1]}'
+        )
+
+
 def model_spec(key: str) -> ModelSpec:
     """Return a reviewed model contract or raise a configuration error."""
     try:
-        return MODEL_SPECS[key]
+        spec = MODEL_SPECS[key]
     except KeyError as exc:
         supported = ', '.join(sorted(MODEL_SPECS))
         raise ValueError(
             f'MODEL must name a supported model: {supported}'
         ) from exc
+    validate_runtime_contract(spec)
+    return spec
