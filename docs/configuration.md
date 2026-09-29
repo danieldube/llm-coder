@@ -61,18 +61,16 @@ The available keys are `qwen3-coder-30b-a3b-fp8`,
 GeForce RTX 5090, uses a 32K context, and starts vLLM with FP8 KV cache,
 eager mode, language-model-only mode, and the `qwen3` reasoning parser.
 
-`RUNPOD_IMAGE_REPOSITORY` supplies only the registry/repository prefix. The
-selected `MODEL` appends its reviewed runtime variant. All current profiles use
-the CUDA 12.8 `:cuda128` compatibility baseline, which supports Blackwell GPUs
-and 570-series RunPod drivers. The repository also publishes a CUDA 12.9
-candidate, but no reviewed profile selects it until real-GPU qualification is
-complete. Variant aliases are mutable; the controller replaces a selected Pod
-when the reviewed model contract changes.
+`RUNPOD_IMAGE_REPOSITORY` supplies the registry/repository prefix. The selected
+`MODEL` appends the reviewed immutable digest of the published CUDA 12.9
+image. Changing that digest replaces the selected Pod. Each profile requires
+RunPod hosts reporting CUDA capability `12.9` or `13.0`; availability may be
+lower than with unconstrained placement.
 
 | Provider setting | Default | Contract |
 | --- | --- | --- |
 | `RUNPOD_CLOUD_TYPE` | `SECURE` | `SECURE` or `COMMUNITY` |
-| `RUNPOD_IMAGE_REPOSITORY` | Required | Runtime-image repository; the model selects its tag |
+| `RUNPOD_IMAGE_REPOSITORY` | Required | Runtime-image repository; the model selects its digest |
 | `RUNPOD_CONTAINER_REGISTRY_AUTH_ID` | Empty | RunPod registry credential ID, never a token |
 | `RUNPOD_CONTAINER_DISK_GB` | `40` | 1–2048 GiB |
 | `RUNPOD_VOLUME_GB` | `100` | 1–65536 GiB; used without a network volume |
@@ -82,11 +80,10 @@ when the reviewed model contract changes.
 | `RUNPOD_NETWORK_VOLUME_ID` | Empty | Existing network volume; replaces `volumeInGb` in create request |
 
 The create request uses the selected model's GPU count/type,
-`interruptible=false`, public IP support, and `22/tcp` only.
+`allowedCudaVersions=["12.9", "13.0"]`, `interruptible=false`, public IP
+support, and `22/tcp` only.
 The selected image must include this project's vLLM launcher and the RunPod
-SSH startup integration. The CUDA 12.9 candidate uses RunPod's documented
-`PUBLIC_KEY` environment variable; the controller sends its existing
-`SSH_PUBLIC_KEY` alias too while CUDA 12.8 remains a fallback.
+SSH startup integration. It uses RunPod's documented `PUBLIC_KEY` variable.
 
 | Inference setting | Contract |
 | --- | --- |
@@ -97,15 +94,12 @@ SSH startup integration. The CUDA 12.9 candidate uses RunPod's documented
 
 The selected model profile pins the vLLM/CUDA versions and model revision that
 its runtime image contains. The launcher always passes that revision. GPU memory
-and model support are runtime constraints beyond these numeric ranges. CUDA 12.8
-is built from the reviewed vLLM source revision because vLLM 0.28.0 does not
-publish a CUDA 12.8 wheel.
+and model support are runtime constraints beyond these numeric ranges.
 
 CUDA 12.9 inherits CUDA, PyTorch, and vLLM from the official vLLM image. The
 image does not replace its driver-library or CUDA-compatibility configuration.
-CUDA 12.8 retains its existing driver handling. CUDA minor-version compatibility
-does not prove that PTX or lazily compiled Triton kernels work on an older host
-driver, so CUDA 12.9 needs a real-GPU inference qualification before use.
+The host placement filter does not prove that PTX or lazily compiled Triton
+kernels work; real-GPU inference qualification remains required.
 
 | Lifecycle/integration setting | Default | Contract |
 | --- | --- | --- |

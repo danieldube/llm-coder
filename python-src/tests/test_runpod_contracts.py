@@ -439,6 +439,18 @@ class TestPersistedPodIdentity(unittest.TestCase):
         )
         self.assertIsNotNone(self.state.read_pod_spec())
 
+    def test_host_filter_change_invalidates_pod_identity(self) -> None:
+        from dataclasses import replace
+
+        config = _settings(self.manager.state_dir)
+        filtered = replace(
+            config, runpod_allowed_cuda_versions=('12.9', '13.0')
+        )
+        self.assertNotEqual(
+            runtime._pod_spec_fingerprint(config, 'ssh-ed25519 public'),
+            runtime._pod_spec_fingerprint(filtered, 'ssh-ed25519 public'),
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

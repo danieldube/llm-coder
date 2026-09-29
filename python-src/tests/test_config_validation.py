@@ -152,18 +152,23 @@ class TestConfigValidation(unittest.TestCase):
         self.assertEqual(settings.context_size, 32768)
         self.assertEqual(settings.vllm_tool_call_parser, 'qwen3_coder')
         self.assertEqual(settings.vllm_version, '0.28.0')
-        self.assertEqual(settings.vllm_cuda_version, '128')
+        self.assertEqual(settings.vllm_cuda_version, '129')
         self.assertEqual(
             settings.runpod_image,
-            'example.invalid/runtime:cuda128',
+            'example.invalid/runtime@'
+            'sha256:e5899e0f548aaf2a5c9bab129fe4ded0855c39517214fd99e6e3ff839ab378db',
         )
         body = pod_create_body(settings, 'ssh-ed25519 public')
         self.assertEqual(body['gpuTypeIds'], ['NVIDIA H200'])
         self.assertEqual(body['gpuCount'], 1)
+        self.assertEqual(body['allowedCudaVersions'], ['12.9', '13.0'])
+        self.assertEqual(body['ports'], ['22/tcp'])
+        self.assertEqual(body['env'], {'PUBLIC_KEY': 'ssh-ed25519 public'})
 
     def test_model_owned_settings_are_rejected(self) -> None:
         cases = {
             'RUNPOD_GPU_TYPE': 'NVIDIA L40S',
+            'RUNPOD_ALLOWED_CUDA_VERSIONS': '12.8',
             'RUNPOD_IMAGE': 'example.invalid/unreviewed:latest',
             'VLLM_VERSION': '0.1.0',
         }
@@ -188,7 +193,8 @@ class TestConfigValidation(unittest.TestCase):
         )
         self.assertEqual(
             settings.runpod_image,
-            'ghcr.io/danieldube/llm-coder-runtime:cuda128',
+            'ghcr.io/danieldube/llm-coder-runtime@'
+            'sha256:e5899e0f548aaf2a5c9bab129fe4ded0855c39517214fd99e6e3ff839ab378db',
         )
 
 

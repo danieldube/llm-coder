@@ -1,9 +1,8 @@
 # Runtime qualification
 
-CUDA 12.9 is the preferred candidate because it uses the official
-`vllm/vllm-openai:v0.28.0-cu129-ubuntu2404` runtime. It is not selected by a
-production model profile until the matching GPU and model path has passed this
-procedure.
+All profiles reference the published CUDA 12.9 image digest. Its software and
+SSH startup have passed CI checks, but RunPod GPU inference has not been
+qualified. Do not treat those checks as proof of model compatibility.
 
 ## Required RunPod qualification
 
@@ -33,21 +32,8 @@ qualify another.
 
 ## Recorded results
 
-No real RunPod GPU qualification has been performed from this checkout.
-Accordingly, every production profile remains on CUDA 12.8, including
-`qwen3.8-nvfp4`. No CUDA 12.9 image digest, host driver, or inference result
-is recorded yet.
-
-The existing `cuda128` alias was restored from `latest` as an emergency
-availability measure. It is not evidence of the CUDA 12.8/vLLM 0.28.0 fallback
-contract. Keep the rollback workflow until a wheel-built CUDA 12.8 candidate
-has been published, statically validated, and GPU-qualified where required.
-
-## Follow-up
-
-`ModelSpec` currently names a validated operational alias (`cuda128` or
-`cuda129`), so the controller can use the last promoted image. Moving each
-model contract to an immutable GHCR digest would require configuration and Pod
-identity changes beyond this release migration. Make that change only after a
-qualified candidate digest is available; do not point a profile at a candidate
-that has not been promoted.
+No real RunPod GPU qualification has been performed from this checkout. The
+published image digest is
+`sha256:e5899e0f548aaf2a5c9bab129fe4ded0855c39517214fd99e6e3ff839ab378db`.
+No host driver, model-loading, streaming, tool-calling, or restart result is
+recorded. Qualify each profile before relying on it for production work.

@@ -34,7 +34,7 @@ grep -F -- '--max-num-seqs' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--enforce-eager' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--language-model-only' "${ROOT}/docker/start-vllm.sh" >/dev/null
 grep -F -- '--reasoning-parser' "${ROOT}/docker/start-vllm.sh" >/dev/null
-grep -F -- 'FROM vllm/vllm-openai:v0.28.0-cu129-ubuntu2404' \
+grep -F -- 'FROM vllm/vllm-openai:v0.28.0-cu129-ubuntu2404@sha256:56b291b6179fe5e6e6ad5c509d362e745280ccdbe81ecbc0f5155b1cab0ebfc5' \
     "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
 grep -F -- 'ENTRYPOINT ["/usr/local/bin/container-start"]' \
     "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
@@ -48,37 +48,11 @@ grep -F -- 'validate-runtime' \
 grep -F -- '/usr/local/bin/vllm-python' \
     "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
 grep -F -- 'pip check' "${ROOT}/docker/Dockerfile.cuda129" >/dev/null
-grep -F -- 'runpod/pytorch:1.3.1-cu1281-torch2130-ubuntu2404@sha256:8ee5a5d7c421cedb3fc3a9550f1360cf385af3986d9fd60ca14b0c25ec7cc5a3' \
-    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
-grep -F -- 'vllm-cu128-wheel-manifest.json' \
-    "${ROOT}/docker/Dockerfile.cuda128" >/dev/null
-grep -F -- '2cf0a6915ce544dc493a0990f2ea38d81601128a' \
-    "${ROOT}/docker/Dockerfile.cuda128-wheel" >/dev/null
-grep -F -- 'TORCH_CUDA_ARCH_LIST' \
-    "${ROOT}/docker/Dockerfile.cuda128-wheel" >/dev/null
-for forbidden in 'git clone' 'cargo' 'cmake' 'ninja' 'setuptools-rust'; do
-    if grep -F -- "${forbidden}" "${ROOT}/docker/Dockerfile.cuda128"; then
-        echo "CUDA 12.8 runtime must not compile vLLM: ${forbidden}." >&2
-        exit 1
-    fi
-done
 # shellcheck disable=SC2016 # The Docker tag template is literal workflow text.
 grep -F -- 'candidate=cuda129-${tag}' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
 grep -F -- 'Promote validated candidate to stable alias' \
     "${ROOT}/.github/workflows/publish-runtime-image.yml" >/dev/null
-grep -F -- 'file: docker/Dockerfile.cuda128' \
-    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
-grep -F -- 'gh release download' \
-    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
-grep -F -- 'Promote validated candidate to stable alias' \
-    "${ROOT}/.github/workflows/publish-cuda128-runtime-image.yml" >/dev/null
-grep -F -- 'runs-on: [self-hosted, linux, x64, cuda-wheel-builder]' \
-    "${ROOT}/.github/workflows/build-cuda128-vllm-wheel.yml" >/dev/null
-grep -F -- 'gh release create' \
-    "${ROOT}/.github/workflows/build-cuda128-vllm-wheel.yml" >/dev/null
-grep -F -- 'Restore CUDA 12.8 fallback alias' \
-    "${ROOT}/.github/workflows/restore-cuda128-from-latest.yml" >/dev/null
 for forbidden in \
     'pip install vllm' 'uv pip install vllm' 'git clone vllm' cmake ninja cargo \
     'pip install torch' 'uv pip install torch'; do

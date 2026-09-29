@@ -25,12 +25,20 @@ class ModelContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'MODEL must name a supported'):
             model_spec('unreviewed')
 
+    def test_unreviewed_image_digest_is_rejected(self) -> None:
+        invalid = replace(
+            MODEL_SPECS['qwen3.8-nvfp4'],
+            runtime_image_digest='sha256:' + '0' * 64,
+        )
+        with self.assertRaisesRegex(ValueError, 'reviewed runtime image'):
+            validate_runtime_contract(invalid)
+
     def test_runtime_version_mismatch_is_rejected(self) -> None:
         invalid = replace(
             MODEL_SPECS['qwen3.8-nvfp4'],
-            runtime_image_tag='cuda129',
+            vllm_cuda_version='128',
         )
-        with self.assertRaisesRegex(ValueError, 'requires vLLM 0.28.0 cu129'):
+        with self.assertRaisesRegex(ValueError, 'vLLM 0.28.0 cu129'):
             validate_runtime_contract(invalid)
 
 

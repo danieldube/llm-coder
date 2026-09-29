@@ -38,9 +38,8 @@ rebuild the GPU image, rehash release binaries, or run live inference.
 - [vLLM v0.28.0 release](https://github.com/vllm-project/vllm/releases/tag/v0.28.0),
   which publishes `vllm/vllm-openai:v0.28.0-cu129-ubuntu2404`, and its
   [Docker deployment documentation](https://docs.vllm.ai/en/latest/deployment/docker/).
-  CUDA 12.9 inherits that official image's CUDA, PyTorch, and vLLM packages;
-  CUDA 12.8 builds the reviewed release revision because no CUDA 12.8 wheel is
-  published for this release. The CI inspection observed PyTorch `2.13.0+cu129`.
+  The runtime inherits that official image's CUDA, PyTorch, and vLLM packages.
+  CI inspection observed PyTorch `2.13.0+cu129`.
 - [NVIDIA CUDA 12.9 release notes](https://docs.nvidia.com/cuda/archive/12.9.0/pdf/CUDA_Toolkit_Release_Notes.pdf)
   and [minor-version compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
   CUDA 12.x minor compatibility has PTX and feature limitations, so import

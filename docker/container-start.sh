@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# RunPod documents PUBLIC_KEY for custom Pod images. SSH_PUBLIC_KEY is accepted
-# temporarily so the existing CUDA 12.8 controller contract remains usable.
-public_key="${PUBLIC_KEY:-${SSH_PUBLIC_KEY:-}}"
+# RunPod documents PUBLIC_KEY for custom Pod images.
+public_key="${PUBLIC_KEY:-}"
 if [[ -z "${public_key}" ]]; then
     echo 'RunPod PUBLIC_KEY is required to start SSH.' >&2
     exit 64

@@ -43,13 +43,17 @@ def settings(root: Path) -> Settings:
         runpod_api_key='secret',
         runpod_ssh_key=root / 'id_ed25519',
         runpod_pod_name='model',
-        runpod_image='image-repository:cuda128',
+        runpod_image=(
+            'image-repository@sha256:'
+            'e5899e0f548aaf2a5c9bab129fe4ded0855c39517214fd99e6e3ff839ab378db'
+        ),
         runpod_gpu_type='NVIDIA L40S',
+        runpod_allowed_cuda_versions=('12.9', '13.0'),
         runpod_image_repository='image-repository',
         model='qwen3-coder-30b-a3b-fp8',
         opencode_version='1',
         vllm_version='0.28.0',
-        vllm_cuda_version='128',
+        vllm_cuda_version='129',
         model_id='Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
         model_revision='e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
         served_model_name='qwen3-coder',
@@ -187,7 +191,7 @@ class FocusedModuleTests(unittest.TestCase):
             runtime._remote_vllm_arguments(config),
             (
                 '0.28.0',
-                '128',
+                '129',
                 'Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
                 'e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
                 'qwen3-coder',
@@ -257,7 +261,6 @@ class FocusedModuleTests(unittest.TestCase):
             body['env'],
             {
                 'PUBLIC_KEY': 'ssh-ed25519 public',
-                'SSH_PUBLIC_KEY': 'ssh-ed25519 public',
             },
         )
         self.assertNotIn('containerRegistryAuthId', body)

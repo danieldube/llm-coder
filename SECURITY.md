@@ -88,11 +88,11 @@ it does not delete credentials, Pod identity, or remote storage.
 Treat the RunPod base image, CUDA runtime, PyTorch/vLLM CUDA builds, model
 revision, and tool parser as one compatibility set when making changes. The
 base image uses a tag and transitive packages are resolved during image builds;
-the controller deliberately selects the runtime repository's mutable `latest`
-tag. A later image publication can therefore change the bytes used by a newly
-created Pod. The controller does not validate the installed versions against
-local settings. Do not repair CUDA mismatches by copying individual CUDA shared
-libraries into the image.
+the controller selects a reviewed immutable runtime digest. A later image
+publication does not change the bytes used by a newly created Pod until the
+model contract is updated. The controller does not validate the installed
+versions against local settings. Do not repair CUDA mismatches by copying
+individual CUDA shared libraries into the image.
 
 The runtime-image publishing workflow uses GitHub Actions' short-lived
 `GITHUB_TOKEN`. Do not add a personal GitHub token to repository or Actions

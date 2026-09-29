@@ -260,6 +260,7 @@ def _pod_spec_fingerprint(config: Settings, public_key: str) -> str:
         'container_disk_gb': config.runpod_container_disk_gb,
         'gpu_count': config.runpod_gpu_count,
         'gpu_type': config.runpod_gpu_type,
+        'allowed_cuda_versions': config.runpod_allowed_cuda_versions,
         'image': config.runpod_image,
         'min_ram_per_gpu': config.runpod_min_ram_per_gpu,
         'min_vcpu_per_gpu': config.runpod_min_vcpu_per_gpu,

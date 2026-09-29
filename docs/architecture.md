@@ -99,10 +99,9 @@ Future installation or activation can recreate the integration.
 
 ## Remote runtime and storage
 
-CUDA 12.8 retains the RunPod PyTorch base image's SSH startup command and
-contains its reviewed source-built vLLM. The CUDA 12.9 candidate starts from
-the official vLLM image, adds OpenSSH and the RunPod Pod startup contract, and
-does not install vLLM or PyTorch. The controller sends the packaged
+The runtime image starts from the official CUDA 12.9 vLLM image, adds OpenSSH
+and the RunPod Pod startup contract, and does not install vLLM or PyTorch.
+The controller sends the packaged
 `remote/ensure-vllm.sh` over SSH; this script runs
 `/opt/llm-coding/bin/start-vllm.sh`, rather than installing dependencies.
 
@@ -220,49 +219,24 @@ Use trusted repositories and read [SECURITY.md](../SECURITY.md).
 
 ## Runtime image releases
 
-`.github/workflows/publish-cuda128-runtime-image.yml` and
-`.github/workflows/publish-runtime-image.yml` publish the CUDA 12.8 and CUDA
-12.9 `linux/amd64` variants, respectively, to
-`ghcr.io/<owner>/<repository>-runtime`. Both push a
-`cuda<version>-sha-<commit>` candidate, validate it, attest it, and only then
-move the stable variant alias. A failed build or validation therefore leaves
-the last validated `cuda128` or `cuda129` alias unchanged.
+`.github/workflows/publish-runtime-image.yml` publishes one `linux/amd64`
+image to `ghcr.io/<owner>/<repository>-runtime`. It builds from the official
+`vllm/vllm-openai:v0.28.0-cu129-ubuntu2404` manifest-list digest
+`sha256:56b291b6179fe5e6e6ad5c509d362e745280ccdbe81ecbc0f5155b1cab0ebfc5`.
+The image adds OpenSSH, the RunPod startup wrapper, and a loopback-only
+launcher. It starts `sshd`; the controller starts vLLM after connecting.
 
-CUDA 12.9 is a thin image based on the official
-`vllm/vllm-openai:v0.28.0-cu129-ubuntu2404` runtime. It adds OpenSSH, the
-RunPod startup wrapper, the loopback-only launcher, and diagnostics. It does
-not reinstall PyTorch, CUDA, or vLLM. The image starts `sshd` only; the
-controller requests vLLM after connecting over SSH.
+The workflow checks versions and local SSH startup before promoting the
+`cuda129` discovery alias. Model profiles use the verified published digest
+`sha256:e5899e0f548aaf2a5c9bab129fe4ded0855c39517214fd99e6e3ff839ab378db`.
+A new publication does not change existing profiles. The workflow publishes
+provenance using `GITHUB_TOKEN`.
 
-CUDA 12.8 is the fallback. Its vLLM wheel is built by the manually triggered
-`build-cuda128-vllm-wheel.yml` workflow on a persistent self-hosted runner
-labelled `cuda-wheel-builder`; GitHub-hosted runners are not authoritative
-builders. The builder uses the pinned RunPod PyTorch base, full vLLM source
-revision `2cf0a6915ce544dc493a0990f2ea38d81601128a`, existing Torch, and
-`TORCH_CUDA_ARCH_LIST='8.9;9.0;12.0'`. It uses `sccache`, emits a JSON manifest
-and SHA256, and publishes the wheel and manifest as an immutable-by-policy
-GitHub Release named
-`vllm-cu128-wheel-0.28.0-2cf0a6915ce544dc493a0990f2ea38d81601128a-torch2.13.0-linux-amd64`.
-The ordinary CUDA 12.8 image workflow downloads that release, verifies the
-manifest and checksum before the Docker build, and repeats those checks inside
-the Dockerfile before installing the wheel. It performs no native compilation.
-
-`restore-cuda128-from-latest.yml` is an emergency rollback workflow. It only
-retags the previously published `:latest` manifest as `:cuda128`; it does not
-build, test, or alter the manifest. Use it only to restore image availability
-when the CUDA 12.8 source build cannot complete. It does not qualify the image
-as CUDA 12.8 or replace the required RunPod GPU smoke test.
-The CUDA 12.9 candidate is checked for its official vLLM software contract and
-local SSH startup before its mutable `cuda129` alias is promoted. A failed
-candidate therefore leaves the preceding CUDA 12.9 alias intact. Current model
-profiles select `cuda128`, the compatibility baseline for Blackwell GPUs and
-570-series drivers. The workflow publishes provenance using `GITHUB_TOKEN`.
-
-Variant aliases are mutable. A model-contract change changes the persisted Pod
-specification fingerprint and causes the controller to replace its selected Pod.
-The CUDA 12.8 base image and source build are pinned to reviewed revisions. The
-CUDA 12.9 Dockerfile uses the official `vllm/vllm-openai:v0.28.0-cu129-ubuntu2404`
-base and records a TODO until its manifest-list digest is independently verified.
+The Pod request restricts host CUDA capability to `12.9` or `13.0`. This
+placement filter and the image digest participate in the persisted Pod
+fingerprint. A changed contract replaces the selected Pod without deleting
+the old Pod or its storage. Actual GPU compatibility still requires inference
+qualification for each model and GPU type.
 
 The official image supplies the CUDA runtime, PyTorch, and vLLM. llm-coding
 adds only its `start-vllm` launcher and a RunPod Pod startup script. The latter
@@ -270,15 +244,15 @@ installs the injected SSH public key, generates host keys at runtime, and runs
 `sshd`; it does not start a model server. `start-vllm` remains responsible for
 launching vLLM on `127.0.0.1` after the controller connects over SSH.
 
-The CUDA 12.9 image validation asserts PyTorch `2.13.0`, CUDA `12.9.x`, and
-vLLM `0.28.0`. It also runs `pip check`. At the currently inspected upstream
-image revision, that command reports that Torch requires NCCL `2.29.7` while
-the image contains `2.30.7`; the build reports this without replacing an
-upstream package. GPU qualification must determine whether it affects runtime.
+Image validation asserts PyTorch `2.13.0`, CUDA `12.9.x`, and vLLM `0.28.0`.
+Only the exact reviewed upstream `pip check` mismatch between Torch's NCCL
+`2.29.7` requirement and installed `2.30.7` is accepted. Other dependency
+errors fail the build. GPU qualification must determine whether the mismatch
+affects inference.
 
 See [runtime qualification](runtime-qualification.md) for the required RunPod
-GPU gate and its recorded results. No model profile switches to CUDA 12.9 until
-the applicable real-GPU inference qualification is recorded.
+GPU gate and its recorded results. The profile digest is published and checked
+in CI, but is not yet qualified on a RunPod GPU.
 
 For private GHCR images, store a read-only package token as a RunPod registry
 credential and set only its ID locally. The publishing repository determines

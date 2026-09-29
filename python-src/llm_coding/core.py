@@ -63,6 +63,7 @@ class LegacySettingsAdapter:
             for key in (
                 'RUNPOD_IMAGE',
                 'RUNPOD_GPU_TYPE',
+                'RUNPOD_ALLOWED_CUDA_VERSIONS',
                 'MODEL_ID',
                 'MODEL_REVISION',
                 'SERVED_MODEL_NAME',

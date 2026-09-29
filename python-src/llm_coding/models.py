@@ -2,13 +2,17 @@
 
 from dataclasses import dataclass
 
+_RUNTIME_DIGEST = (
+    'sha256:e5899e0f548aaf2a5c9bab129fe4ded0855c39517214fd99e6e3ff839ab378db'
+)
+
 
 @dataclass(frozen=True)
 class ModelSpec:
     """All model-owned settings, including its RunPod hardware contract."""
 
     key: str
-    runtime_image_tag: str
+    runtime_image_digest: str
     vllm_version: str
     vllm_cuda_version: str
     model_id: str
@@ -32,9 +36,9 @@ class ModelSpec:
 MODEL_SPECS: dict[str, ModelSpec] = {
     'qwen3-coder-30b-a3b-fp8': ModelSpec(
         key='qwen3-coder-30b-a3b-fp8',
-        runtime_image_tag='cuda128',
+        runtime_image_digest=_RUNTIME_DIGEST,
         vllm_version='0.28.0',
-        vllm_cuda_version='128',
+        vllm_cuda_version='129',
         model_id='Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8',
         model_revision='e8ab3f2db9e388999a004eea5a31c16a8b517bc0',
         served_model_name='qwen3-coder',
@@ -54,9 +58,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     ),
     'qwen3-coder-next-fp8': ModelSpec(
         key='qwen3-coder-next-fp8',
-        runtime_image_tag='cuda128',
+        runtime_image_digest=_RUNTIME_DIGEST,
         vllm_version='0.28.0',
-        vllm_cuda_version='128',
+        vllm_cuda_version='129',
         model_id='Qwen/Qwen3-Coder-Next-FP8',
         model_revision='da6e2ed27304dd39abadd9c82ef50e8de67bdd4c',
         served_model_name='qwen3-coder-next',
@@ -76,9 +80,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     ),
     'qwen3.8-nvfp4': ModelSpec(
         key='qwen3.8-nvfp4',
-        runtime_image_tag='cuda128',
+        runtime_image_digest=_RUNTIME_DIGEST,
         vllm_version='0.28.0',
-        vllm_cuda_version='128',
+        vllm_cuda_version='129',
         model_id='Inferact/Qwen3.8-27B-NVFP4',
         model_revision='cb12525975f2527d9fefbe7b13de65546db30f9a',
         served_model_name='qwen38-coder',
@@ -99,26 +103,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
 }
 
 
-_RUNTIME_CONTRACTS = {
-    'cuda128': ('0.28.0', '128'),
-    'cuda129': ('0.28.0', '129'),
-}
-
-
 def validate_runtime_contract(spec: ModelSpec) -> None:
     """Reject a profile whose reviewed image and vLLM contract disagree."""
-    expected = _RUNTIME_CONTRACTS.get(spec.runtime_image_tag)
-    if expected is None:
-        supported = ', '.join(sorted(_RUNTIME_CONTRACTS))
-        raise ValueError(
-            f'Unsupported runtime image tag {spec.runtime_image_tag!r}; '
-            f'expected one of: {supported}'
-        )
-    if (spec.vllm_version, spec.vllm_cuda_version) != expected:
-        raise ValueError(
-            f'Runtime image tag {spec.runtime_image_tag!r} requires vLLM '
-            f'{expected[0]} cu{expected[1]}'
-        )
+    if spec.runtime_image_digest != _RUNTIME_DIGEST:
+        raise ValueError('Model must use the reviewed runtime image digest')
+    if (spec.vllm_version, spec.vllm_cuda_version) != ('0.28.0', '129'):
+        raise ValueError('Runtime image requires vLLM 0.28.0 cu129')
 
 
 def model_spec(key: str) -> ModelSpec:

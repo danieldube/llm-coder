@@ -200,6 +200,7 @@ def pod_create_body(config: Settings, public_key: str) -> dict[str, Any]:
         'cloudType': config.runpod_cloud_type,
         'computeType': 'GPU',
         'gpuTypeIds': [config.runpod_gpu_type],
+        'allowedCudaVersions': list(config.runpod_allowed_cuda_versions),
         'gpuTypePriority': 'availability',
         'gpuCount': config.runpod_gpu_count,
         'interruptible': False,
@@ -209,11 +210,8 @@ def pod_create_body(config: Settings, public_key: str) -> dict[str, Any]:
         'minRAMPerGPU': config.runpod_min_ram_per_gpu,
         'minVCPUPerGPU': config.runpod_min_vcpu_per_gpu,
         'ports': ['22/tcp'],
-        # PUBLIC_KEY is RunPod's documented custom-image SSH variable. Keep
-        # SSH_PUBLIC_KEY for the CUDA 12.8 RunPod base during the transition.
         'env': {
             'PUBLIC_KEY': public_key,
-            'SSH_PUBLIC_KEY': public_key,
         },
     }
     if config.runpod_container_registry_auth_id:

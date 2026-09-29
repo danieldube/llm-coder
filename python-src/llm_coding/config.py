@@ -29,6 +29,7 @@ class Settings:
     runpod_pod_name: str
     runpod_image: str
     runpod_gpu_type: str
+    runpod_allowed_cuda_versions: tuple[str, ...] = ()
     runpod_image_repository: str = ''
     model: str = ''
     runpod_gpu_count: int = 1
@@ -198,6 +199,7 @@ def parse_settings(
     for key in (
         'RUNPOD_IMAGE',
         'RUNPOD_GPU_TYPE',
+        'RUNPOD_ALLOWED_CUDA_VERSIONS',
         'MODEL_ID',
         'MODEL_REVISION',
         'SERVED_MODEL_NAME',
@@ -238,12 +240,13 @@ def parse_settings(
         runpod_ssh_key=path('RUNPOD_SSH_KEY'),
         runpod_pod_name=text('RUNPOD_POD_NAME'),
         runpod_image=(
-            f'{image_repository}:{profile.runtime_image_tag}'
+            f'{image_repository}@{profile.runtime_image_digest}'
             if profile
             else ''
         ),
         runpod_image_repository=image_repository,
         runpod_gpu_type=profile.runpod_gpu_type if profile else '',
+        runpod_allowed_cuda_versions=('12.9', '13.0') if profile else (),
         model=profile_name,
         runpod_gpu_count=profile.runpod_gpu_count if profile else 1,
         runpod_cloud_type=cloud,
