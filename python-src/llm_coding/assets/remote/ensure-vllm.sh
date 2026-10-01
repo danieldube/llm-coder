@@ -37,7 +37,7 @@ if [[ ! -x "${LAUNCHER}" ]]; then
     fail missing_launcher
 fi
 
-if ! /usr/local/bin/python - <<'PY'
+if ! /usr/local/bin/vllm-python - <<'PY'
 import torch
 
 if not torch.cuda.is_available():

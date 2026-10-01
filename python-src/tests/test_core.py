@@ -174,6 +174,17 @@ class FocusedModuleTests(unittest.TestCase):
             runtime._asset_text('remote', 'ensure-vllm.sh'),
         )
 
+    def test_remote_cuda_probe_uses_image_vllm_interpreter(self) -> None:
+        script = runtime._asset_text('remote', 'ensure-vllm.sh')
+        launcher = (
+            Path(__file__).resolve().parents[2]
+            / 'docker/start-vllm.cuda129.sh'
+        ).read_text(encoding='utf-8')
+
+        self.assertIn('VLLM_PYTHON=/usr/local/bin/vllm-python', launcher)
+        self.assertIn('if ! /usr/local/bin/vllm-python -', script)
+        self.assertNotIn('/usr/local/bin/python -', script)
+
     def test_remote_vllm_arguments_include_launch_configuration(self) -> None:
         config = replace(
             settings(Path('/keys')),
