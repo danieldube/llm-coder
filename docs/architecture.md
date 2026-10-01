@@ -61,8 +61,12 @@ fingerprint must match the selected internal model contract; otherwise startup
 stops the old Pod and creates a replacement without deleting the old Pod or
 storage. Only a missing selection or a
 provider 404 permits exact-name adoption; multiple matches fail. A new Pod is
-created only by startup when no match exists. Shutdown uses the same selection
-logic and can adopt a named Pod; status never adopts or replaces a selection.
+created only by startup when no match exists. If creation reports an API error
+but a unique Pod with the configured name has appeared, startup saves its ID
+and specification and continues. An adopted Pod without a saved specification
+requires manual verification before startup can replace it. Shutdown uses the
+same selection logic and can adopt a named Pod; status never adopts or replaces
+a selection.
 A live persisted ID takes precedence over changes to `RUNPOD_POD_NAME`.
 
 The SSH endpoint is bound to the selected Pod ID in local state. Stable

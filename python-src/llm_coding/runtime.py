@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 import requests
 
@@ -242,15 +242,31 @@ def _create_pod_or_raise(
     try:
         return client.create_pod(pod_create_body(config, public_key))
     except RunPodAPIError as exc:
-        if not _is_capacity_error(exc):
-            raise
+        _raise_create_pod_error(exc)
+
+
+def _raise_create_pod_error(exc: RunPodAPIError) -> NoReturn:
+    if _is_capacity_error(exc):
         raise RuntimeError(
             'RunPod could not create a pod: no instances are currently '
             'available for the configured request. Retry llm-up later. '
-            'If this '
-            'persists, check availability for RUNPOD_GPU_TYPE and '
+            'If this persists, check availability for RUNPOD_GPU_TYPE and '
             'RUNPOD_CLOUD_TYPE in RunPod before changing configuration.'
         ) from None
+    raise exc
+
+
+def _create_or_reconcile_pod(
+    client: PodProvider, config: Settings, public_key: str
+) -> str:
+    """Recover a Pod visible after an unsuccessful initial create response."""
+    try:
+        return client.create_pod(pod_create_body(config, public_key))
+    except RunPodAPIError as exc:
+        pod = client.find_pod_by_name(config.runpod_pod_name)
+        if pod is not None:
+            return str(pod['id'])
+        _raise_create_pod_error(exc)
 
 
 def _pod_spec_fingerprint(config: Settings, public_key: str) -> str:
@@ -398,13 +414,20 @@ def up(
         pod = _select_pod(state, client, config.runpod_pod_name, deps.run)
         if pod is None:
             state.set_activation_status('Creating a RunPod pod')
-            pod_id = _create_pod_or_raise(client, config, public_key)
+            pod_id = _create_or_reconcile_pod(client, config, public_key)
             state.write_pod_id(pod_id)
             state.write_pod_spec(_pod_spec_fingerprint(config, public_key))
         else:
             pod_id = str(pod['id'])
             expected_spec = _pod_spec_fingerprint(config, public_key)
-            if state.read_pod_spec() != expected_spec:
+            saved_spec = state.read_pod_spec()
+            if saved_spec is None:
+                raise RuntimeError(
+                    f'RunPod pod {pod_id} has no saved specification. '
+                    'Verify its configuration in RunPod before adopting or '
+                    'replacing it; llm-up will not replace it automatically.'
+                )
+            if saved_spec != expected_spec:
                 state.set_activation_status(
                     'Replacing an incompatible RunPod pod for the selected '
                     'model'

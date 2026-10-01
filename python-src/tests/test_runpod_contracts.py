@@ -451,6 +451,68 @@ class TestPersistedPodIdentity(unittest.TestCase):
             runtime._pod_spec_fingerprint(filtered, 'ssh-ed25519 public'),
         )
 
+    def test_failed_create_adopts_pod_visible_after_response(self) -> None:
+        config = _settings(self.manager.state_dir)
+        client = MagicMock()
+        client.create_pod.side_effect = RunPodAPIError(
+            'no instances currently available', 500
+        )
+        client.find_pod_by_name.return_value = _pod('created')
+
+        self.assertEqual(
+            runtime._create_or_reconcile_pod(
+                client, config, 'ssh-ed25519 public'
+            ),
+            'created',
+        )
+        client.find_pod_by_name.assert_called_once_with('model')
+
+    def test_failed_create_without_pod_preserves_capacity_error(self) -> None:
+        client = MagicMock()
+        client.create_pod.side_effect = RunPodAPIError(
+            'no instances currently available', 500
+        )
+        client.find_pod_by_name.return_value = None
+
+        with self.assertRaisesRegex(RuntimeError, 'Retry llm-up later'):
+            runtime._create_or_reconcile_pod(
+                client,
+                _settings(self.manager.state_dir),
+                'ssh-ed25519 public',
+            )
+
+    def test_failed_create_with_duplicate_names_fails_closed(self) -> None:
+        client = MagicMock()
+        client.create_pod.side_effect = RunPodAPIError('failed', 500)
+        client.find_pod_by_name.side_effect = ValueError('ambiguous')
+
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            runtime._create_or_reconcile_pod(
+                client,
+                _settings(self.manager.state_dir),
+                'ssh-ed25519 public',
+            )
+
+    def test_adopted_pod_without_spec_is_not_replaced(self) -> None:
+        config = _settings(self.manager.state_dir)
+        (self.manager.state_dir / 'id_ed25519.pub').write_text(
+            'ssh-ed25519 public\n'
+        )
+        self.manager.load_settings.return_value = config
+        client = MagicMock()
+        client.find_pod_by_name.return_value = _pod('existing')
+
+        with (
+            patch.object(runtime, 'ConfigManager', return_value=self.manager),
+            patch('llm_coding.runtime.ensure_acp_registration'),
+            self.assertRaisesRegex(RuntimeError, 'no saved specification'),
+        ):
+            runtime.up(provider=client)
+
+        client.stop_pod.assert_not_called()
+        client.create_pod.assert_not_called()
+        self.assertEqual(self.state.read_pod_id(), 'existing')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -130,6 +130,9 @@ The controller persists a fingerprint of the model and Pod definition. On
 that Pod and creates a replacement. It never deletes the old Pod or storage.
 The transition clears only that Pod's saved SSH endpoint before enrolling the
 replacement through the normal fail-closed host-key flow.
+If an adopted Pod has no saved specification, `llm-up` stops with its Pod ID
+instead of replacing it. Verify that Pod's image, GPU, volume, and SSH
+configuration in RunPod before treating it as the current deployment.
 
 Changing `JETBRAINS_AGENT_NAME` creates a new entry without removing the old
 name. Remove the old integration before renaming if it should not remain.
